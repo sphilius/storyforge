@@ -1,38 +1,27 @@
-storyforge/
-├─ README.md
-├─ .gitignore
-├─ .env.example
-├─ package.json
-├─ requirements.txt
-├─ frontend/
-│  ├─ package.json
-│  ├─ src/
-│  └─ public/
-├─ backend/
-│  ├─ app/
-│  │  ├─ main.py
-│  │  ├─ api/
-│  │  ├─ core/
-│  │  ├─ models/
-│  │  ├─ services/
-│  │  └─ workers/
-│  └─ tests/
-├─ docs/
-│  ├─ PRD.md
-│  ├─ ARCHITECTURE.md
-│  ├─ MILESTONES.md
-│  ├─ DEMO_SCRIPT.md
-│  ├─ TRACE_VIEW.md
-│  └─ PROMPTS.md
-├─ prompts/
-│  ├─ director/
-│  ├─ character/
-│  └─ analysis/
-├─ scripts/
-│  ├─ dev.ps1
-│  ├─ run_backend.ps1
-│  ├─ run_frontend.ps1
-│  └─ smoke_test.ps1
-└─ assets/
-   ├─ demo/
-   └─ refs/
+# StoryForge
+
+StoryForge is a live multimodal storytelling workspace for brainstorming, scene design, character interviews, storyboard generation, and narrative continuity support.
+
+## Current goal
+Build a hackathon-ready demo for the Gemini Live Agent Challenge.
+
+## Core loop
+User speaks → Director responds → Trace View updates → story graph updates → storyboard frames appear asynchronously.
+
+## Stack
+- Frontend: React + React Flow
+- Backend: FastAPI
+- Live voice: Vertex AI Gemini Live API
+- Images: Gemini API image generation
+- Deployment: Cloud Run
+
+## Repo status
+This repo is currently in active hackathon development.
+
+## Docs
+- `docs/PRD.md`
+- `docs/ARCHITECTURE.md`
+- `docs/MILESTONES.md`
+- `docs/DEMO_SCRIPT.md`
+- `docs/TRACE_VIEW.md`
+- `docs/PROMPTS.md`
