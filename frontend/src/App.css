@@ -1,42 +1,113 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+.app-shell {
+  height: 100vh;
+  background: #0f131a;
+  color: #dbe5f0;
+  display: grid;
+  grid-template-rows: 64px 1fr;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.app-header {
+  border-bottom: 1px solid #222a34;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #121720;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
+.app-header h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.app-header p {
+  margin: 0;
+  color: #93a4b8;
+  font-size: 0.9rem;
+}
+
+.app-main {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 360px;
+}
+
+.canvas-area {
+  min-height: 0;
+}
+
+.side-panel {
+  border-left: 1px solid #222a34;
+  background: #11161f;
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.panel-block {
+  border: 1px solid #293341;
+  border-radius: 10px;
+  background: #161d28;
+  padding: 12px;
+}
+
+.panel-block h2 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #eef4ff;
+}
+
+.panel-block p {
+  margin: 0;
+  color: #c6d2e0;
+  line-height: 1.5;
+}
+
+.error-text {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid #5b2a2a;
+  border-radius: 8px;
+  background: #301818;
+  color: #ffb9b9;
+  font-size: 0.85rem;
+}
+
+.trace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trace-list li {
+  border: 1px solid #2b3543;
+  border-radius: 8px;
+  background: #111821;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.trace-list li span:first-child {
+  color: #d0dbe8;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .app-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
   }
-  to {
-    transform: rotate(360deg);
+
+  .side-panel {
+    border-left: 0;
+    border-top: 1px solid #222a34;
   }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
 }
