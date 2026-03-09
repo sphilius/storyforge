@@ -5,7 +5,9 @@ import time
 from collections import deque
 from difflib import SequenceMatcher
 from functools import lru_cache
+from html import escape
 from typing import Any, Literal
+from urllib.parse import quote
 
 try:
     from dotenv import load_dotenv
@@ -80,14 +82,31 @@ class StoryboardRequestResponse(BaseModel):
     job_id: str
     beat_id: str
     status: Literal["not_requested", "requested", "generating", "completed", "failed"]
+    result: "StoryboardResult | None" = None
     trace: list[str]
     message: str
+
+
+class StoryboardImageResult(BaseModel):
+    id: str
+    url: str
+    mime_type: str
+    width: int
+    height: int
+    source: Literal["mock", "generated"]
+
+
+class StoryboardResult(BaseModel):
+    beat_id: str
+    provider: str
+    images: list[StoryboardImageResult]
 
 
 class StoryboardStatusResponse(BaseModel):
     beat_id: str
     status: Literal["not_requested", "requested", "generating", "completed", "failed"]
     job_id: str | None = None
+    result: StoryboardResult | None = None
     trace: list[str]
     message: str
 
@@ -97,8 +116,12 @@ class StoryboardJobRecord(BaseModel):
     beat_id: str
     status: Literal["requested", "generating", "completed", "failed"]
     should_fail: bool
+    beat_label: str
     start_after_ts: float
     complete_after_ts: float
+    result: StoryboardResult | None = None
+    result_attached_emitted: bool = False
+    result_missing_emitted: bool = False
 
 
 SENTINEL_RECENT_INPUTS: deque[str] = deque(maxlen=10)
@@ -501,6 +524,51 @@ def generate_director_response(user_input: str) -> tuple[str, list[str]]:
     return generate_standard_director_response(user_input)
 
 
+def build_mock_storyboard_result(job: StoryboardJobRecord) -> StoryboardResult:
+    label_text = job.beat_label.strip() or f"Beat {job.beat_id}"
+    safe_label = escape(label_text[:64])
+    safe_beat_id = escape(job.beat_id[:48])
+    checksum = sum(ord(char) for char in f"{job.beat_id}|{label_text}|{job.job_id}")
+    hue_a = checksum % 360
+    hue_b = (checksum + 42) % 360
+
+    svg_markup = (
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 768 432'>"
+        "<defs>"
+        f"<linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'>"
+        f"<stop offset='0%' stop-color='hsl({hue_a},55%,24%)'/>"
+        f"<stop offset='100%' stop-color='hsl({hue_b},62%,14%)'/>"
+        "</linearGradient>"
+        "</defs>"
+        "<rect x='0' y='0' width='768' height='432' fill='url(#bg)'/>"
+        "<rect x='32' y='32' width='704' height='368' rx='18' fill='rgba(15,17,21,0.32)' "
+        "stroke='rgba(245,247,250,0.28)'/>"
+        f"<text x='48' y='92' fill='#f5f7fa' font-size='28' font-family='Arial,sans-serif'>"
+        f"Storyboard: {safe_label}</text>"
+        f"<text x='48' y='132' fill='#cdd3df' font-size='18' font-family='Arial,sans-serif'>"
+        f"Beat: {safe_beat_id}</text>"
+        "<text x='48' y='370' fill='#9aa0ad' font-size='16' font-family='Arial,sans-serif'>"
+        "Mock result attached by Slice 7c</text>"
+        "</svg>"
+    )
+    image_url = f"data:image/svg+xml;utf8,{quote(svg_markup)}"
+
+    return StoryboardResult(
+        beat_id=job.beat_id,
+        provider="mock_storyboard",
+        images=[
+            StoryboardImageResult(
+                id=f"{job.job_id}-image-1",
+                url=image_url,
+                mime_type="image/svg+xml",
+                width=768,
+                height=432,
+                source="mock",
+            )
+        ],
+    )
+
+
 def resolve_storyboard_status(job: StoryboardJobRecord, now_ts: float) -> tuple[str, list[str]]:
     trace: list[str] = []
 
@@ -515,6 +583,25 @@ def resolve_storyboard_status(job: StoryboardJobRecord, now_ts: float) -> tuple[
         else:
             job.status = "completed"
             trace.append("storyboard_generation_completed")
+
+    if job.status == "completed":
+        if job.result is None:
+            try:
+                job.result = build_mock_storyboard_result(job)
+            except Exception:
+                logger.exception(
+                    "storyboard_result_attach_failed beat_id=%s job_id=%s",
+                    job.beat_id,
+                    job.job_id,
+                )
+
+        if job.result is not None and not job.result_attached_emitted:
+            trace.append("storyboard_result_attached")
+            job.result_attached_emitted = True
+
+        if job.result is None and not job.result_missing_emitted:
+            trace.append("storyboard_result_missing")
+            job.result_missing_emitted = True
 
     return job.status, trace
 
@@ -593,6 +680,7 @@ def storyboard_request(payload: StoryboardRequestPayload) -> StoryboardRequestRe
             beat_id=beat_id,
             status="requested",
             should_fail=should_fail,
+            beat_label=payload.beat_label.strip() or payload.beat_title.strip() or beat_id,
             start_after_ts=now_ts + 0.5,
             complete_after_ts=now_ts + 2.0,
         )
@@ -602,6 +690,7 @@ def storyboard_request(payload: StoryboardRequestPayload) -> StoryboardRequestRe
             job_id=job_id,
             beat_id=beat_id,
             status="requested",
+            result=None,
             trace=["storyboard_requested"],
             message="Storyboard request accepted (mock).",
         )
@@ -654,6 +743,7 @@ def storyboard_status(beat_id: str) -> StoryboardStatusResponse:
         beat_id=normalized_beat_id,
         status=status,
         job_id=job.job_id,
+        result=job.result,
         trace=transition_trace,
         message=status_message,
     )

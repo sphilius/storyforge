@@ -15,7 +15,7 @@ Deliver one coherent, legible, technically credible live demo loop for the Gemin
 6. User selects a beat and edits title/summary/notes + lore anchors in the right panel
 7. User triggers storyboard generation for a selected beat
 8. Storyboard status moves through requested -> generating -> completed/failed
-9. Storyboard frames appear asynchronously
+9. Completed storyboard image results are attached to the requesting beat and shown in Selected Beat
 10. User interrupts, revises, and continues
 
 ## Primary users
@@ -35,6 +35,7 @@ Deliver one coherent, legible, technically credible live demo loop for the Gemin
 - Soft three-clue rule support (suggestive connective-richness checks, not hard blocking)
 - Beat -> storyboard request initiation from selected beat context
 - Async storyboard lifecycle per beat (`not requested`, `requested`, `generating`, `completed`, `failed`)
+- Beat-scoped storyboard result attachment + preview
 - Async storyboard generation
 - Trace View
 - Character Interview Mode (1 active character)

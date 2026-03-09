@@ -33,6 +33,21 @@ type StoryboardStatus =
   | "completed"
   | "failed";
 
+type StoryboardImageResult = {
+  id: string;
+  url: string;
+  mime_type: string;
+  width: number;
+  height: number;
+  source: "mock" | "generated";
+};
+
+type StoryboardResult = {
+  beat_id: string;
+  provider: string;
+  images: StoryboardImageResult[];
+};
+
 type StoryboardRequestPayload = {
   beat_id: string;
   beat_label: string;
@@ -46,6 +61,7 @@ type StoryboardRequestResponse = {
   job_id: string;
   beat_id: string;
   status: StoryboardStatus;
+  result?: StoryboardResult | null;
   trace: string[];
   message: string;
 };
@@ -54,6 +70,7 @@ type StoryboardStatusResponse = {
   beat_id: string;
   status: StoryboardStatus;
   job_id?: string;
+  result?: StoryboardResult | null;
   trace: string[];
   message: string;
 };
@@ -80,6 +97,7 @@ type StoryNodeData = {
   sentinelWarnings?: StorySentinelWarning[];
   lorePool: LorePool;
   storyboardStatus: StoryboardStatus;
+  storyboardResult: StoryboardResult | null;
 };
 
 type VoiceStatus = "idle" | "listening" | "processing" | "unsupported" | "error";
@@ -424,6 +442,7 @@ const toNode = (data: DirectorResponse): Node<StoryNodeData> => {
       sentinelWarnings,
       lorePool,
       storyboardStatus: "not_requested",
+      storyboardResult: null,
     },
     type: "default",
   };
@@ -449,6 +468,7 @@ export default function App() {
   const selectedNodeIdRef = useRef<string | null>(null);
   const beatEditStartedRef = useRef(false);
   const storyboardPollingBeatsRef = useRef<Set<string>>(new Set());
+  const storyboardDisplayedResultsRef = useRef<Set<string>>(new Set());
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setNodes((current) => applyNodeChanges(changes, current));
@@ -478,6 +498,7 @@ export default function App() {
     : "Most recent action";
   const selectedStoryboardStatus: StoryboardStatus =
     selectedNode?.data.storyboardStatus ?? "not_requested";
+  const selectedStoryboardImage = selectedNode?.data.storyboardResult?.images[0] ?? null;
 
   const handleFlowInit = useCallback((instance: ReactFlowInstance) => {
     flowRef.current = instance;
@@ -487,8 +508,12 @@ export default function App() {
     setTrace((current) => [...current, event]);
   }, []);
 
-  const updateNodeStoryboardStatus = useCallback(
-    (beatId: string, status: StoryboardStatus) => {
+  const updateNodeStoryboardState = useCallback(
+    (
+      beatId: string,
+      status: StoryboardStatus,
+      result?: StoryboardResult | null,
+    ) => {
       setNodes((current) =>
         current.map((node) =>
           node.id === beatId
@@ -497,6 +522,8 @@ export default function App() {
                 data: {
                   ...node.data,
                   storyboardStatus: status,
+                  storyboardResult:
+                    result === undefined ? node.data.storyboardResult : result,
                 },
               }
             : node,
@@ -526,7 +553,14 @@ export default function App() {
           if (data.trace.length > 0) {
             setTrace((current) => [...current, ...data.trace]);
           }
-          updateNodeStoryboardStatus(beatId, data.status);
+          updateNodeStoryboardState(
+            beatId,
+            data.status,
+            data.result ?? (data.status === "completed" ? null : undefined),
+          );
+          if (data.status === "completed" && !data.result) {
+            appendTraceEvent("storyboard_result_missing");
+          }
 
           if (data.status === "requested" || data.status === "generating") {
             window.setTimeout(() => {
@@ -539,7 +573,7 @@ export default function App() {
         } catch (err) {
           storyboardPollingBeatsRef.current.delete(beatId);
           appendTraceEvent("storyboard_generation_failed");
-          updateNodeStoryboardStatus(beatId, "failed");
+          updateNodeStoryboardState(beatId, "failed");
           const message =
             err instanceof Error ? err.message : "Storyboard status polling failed.";
           setError(message);
@@ -548,7 +582,7 @@ export default function App() {
 
       void pollOnce();
     },
-    [appendTraceEvent, updateNodeStoryboardStatus],
+    [appendTraceEvent, updateNodeStoryboardState],
   );
 
   const sendDirectorInput = useCallback(async (input: string) => {
@@ -630,6 +664,27 @@ export default function App() {
     setBeatDraft(toBeatDraft(selectedNode));
     appendTraceEvent("node_selected");
     appendTraceEvent("lore_viewed");
+  }, [appendTraceEvent, selectedNode]);
+
+  useEffect(() => {
+    if (!selectedNode) {
+      return;
+    }
+
+    const storyboardResult = selectedNode.data.storyboardResult;
+    if (!storyboardResult || storyboardResult.images.length === 0) {
+      return;
+    }
+
+    const resultKey = `${selectedNode.id}:${storyboardResult.images
+      .map((image) => image.id)
+      .join("|")}`;
+    if (storyboardDisplayedResultsRef.current.has(resultKey)) {
+      return;
+    }
+
+    storyboardDisplayedResultsRef.current.add(resultKey);
+    appendTraceEvent("storyboard_result_displayed");
   }, [appendTraceEvent, selectedNode]);
 
   const handleBeatFieldChange = useCallback(
@@ -770,7 +825,7 @@ export default function App() {
     const beatLabel = composeBeatLabel(title, summary);
 
     appendTraceEvent("storyboard_requested");
-    updateNodeStoryboardStatus(selectedNode.id, "requested");
+    updateNodeStoryboardState(selectedNode.id, "requested", null);
 
     try {
       const payload: StoryboardRequestPayload = {
@@ -813,13 +868,16 @@ export default function App() {
 
       const data: StoryboardRequestResponse = await response.json();
       setTrace((current) => [...current, ...data.trace]);
-      updateNodeStoryboardStatus(selectedNode.id, data.status);
+      updateNodeStoryboardState(selectedNode.id, data.status, data.result ?? null);
+      if (data.status === "completed" && !data.result) {
+        appendTraceEvent("storyboard_result_missing");
+      }
       if (data.status === "requested" || data.status === "generating") {
         pollStoryboardStatus(selectedNode.id);
       }
       setError("");
     } catch (err) {
-      updateNodeStoryboardStatus(selectedNode.id, "failed");
+      updateNodeStoryboardState(selectedNode.id, "failed");
       appendTraceEvent("storyboard_request_failed");
       const message = err instanceof Error ? err.message : "Storyboard request failed.";
       setError(message);
@@ -829,7 +887,7 @@ export default function App() {
     beatDraft,
     pollStoryboardStatus,
     selectedNode,
-    updateNodeStoryboardStatus,
+    updateNodeStoryboardState,
   ]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -915,6 +973,7 @@ export default function App() {
     return () => {
       recognitionRef.current?.stop();
       storyboardPollingBeatsRef.current.clear();
+      storyboardDisplayedResultsRef.current.clear();
     };
   }, []);
 
@@ -1239,6 +1298,37 @@ export default function App() {
                       ? "Generating..."
                       : "Generate Storyboard"}
                 </button>
+                {selectedStoryboardImage ? (
+                  <div
+                    style={{
+                      border: "1px solid #2b2f3a",
+                      borderRadius: "8px",
+                      background: "#111318",
+                      padding: "8px",
+                      display: "grid",
+                      gap: "6px",
+                    }}
+                  >
+                    <img
+                      src={selectedStoryboardImage.url}
+                      alt={`Storyboard preview for ${beatDraft.title || beatDraft.id}`}
+                      style={{
+                        width: "100%",
+                        borderRadius: "6px",
+                        border: "1px solid #2b2f3a",
+                        background: "#0f1115",
+                      }}
+                    />
+                    <p style={{ margin: 0, fontSize: "11px", color: "#9aa0ad" }}>
+                      Source: {selectedStoryboardImage.source} |{" "}
+                      {selectedStoryboardImage.width}x{selectedStoryboardImage.height}
+                    </p>
+                  </div>
+                ) : selectedStoryboardStatus === "completed" ? (
+                  <p style={{ margin: 0, fontSize: "12px", color: "#9aa0ad" }}>
+                    Storyboard completed, but no image result is attached yet.
+                  </p>
+                ) : null}
               </section>
 
               <div style={{ display: "flex", gap: "8px" }}>
