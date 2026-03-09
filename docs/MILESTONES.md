@@ -6,10 +6,10 @@
 3. Slice 2c: selected beat inspection + editing in right panel (frontend-only)
 4. Slice 4a: Gemini-backed Director response in backend (`/director/respond`)
 5. Slice 4b: optional Gemini Live session path in backend (`/director/respond` with fallback)
-6. Async storyboard generation
-7. Trace View / Director Overlay
-8. Character Interview Mode
-9. Story Sentinel
+6. Slice 5a: Story Sentinel warnings (backend heuristic checks + right-panel warning layer)
+7. Async storyboard generation
+8. Trace View / Director Overlay
+9. Character Interview Mode
 10. Import flow
 11. Flexible lore pool + soft three-clue rule
 

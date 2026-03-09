@@ -4,9 +4,19 @@ import ReactFlow, { Background, Controls, applyNodeChanges } from "reactflow";
 import type { Node, NodeChange, ReactFlowInstance } from "reactflow";
 import "reactflow/dist/style.css";
 
+type StorySentinelWarning = {
+  code: string;
+  message: string;
+};
+
+type StorySentinelData = {
+  warnings: StorySentinelWarning[];
+};
+
 type DirectorResponse = {
   director_response: string;
   trace: string[];
+  story_sentinel?: StorySentinelData;
   node: {
     id: string;
     label: string;
@@ -21,6 +31,7 @@ type StoryNodeData = {
   title?: string;
   summary?: string;
   notes?: string;
+  sentinelWarnings?: StorySentinelWarning[];
 };
 
 type VoiceStatus = "idle" | "listening" | "processing" | "unsupported" | "error";
@@ -71,6 +82,120 @@ const composeBeatLabel = (title: string, summary: string): string => {
     : normalizedTitle;
 };
 
+const normalizeSentinelText = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const LOCAL_GENERIC_TITLES = new Set([
+  "beat",
+  "scene",
+  "story",
+  "next",
+  "idea",
+  "moment",
+  "untitled beat",
+]);
+
+const LOCAL_GENERIC_PATTERNS = [
+  "continue",
+  "next beat",
+  "something happens",
+  "move forward",
+  "keep going",
+  "what happens next",
+];
+
+const LOCAL_CONTEXT_KEYWORDS = new Set([
+  "who",
+  "where",
+  "when",
+  "because",
+  "after",
+  "before",
+  "during",
+  "inside",
+  "outside",
+  "city",
+  "room",
+  "forest",
+  "ship",
+  "king",
+  "detective",
+]);
+
+const buildLocalSentinelWarnings = ({
+  nodeId,
+  title,
+  summary,
+  notes,
+  nodes,
+}: {
+  nodeId: string;
+  title: string;
+  summary: string;
+  notes: string;
+  nodes: Node<StoryNodeData>[];
+}): StorySentinelWarning[] => {
+  const warnings: StorySentinelWarning[] = [];
+  const normalizedTitle = normalizeSentinelText(title);
+  const normalizedIntent = normalizeSentinelText(composeBeatLabel(title, summary));
+  const normalizedContext = normalizeSentinelText(`${summary} ${notes}`);
+  const contextWords = normalizedContext.split(" ").filter(Boolean);
+
+  const hasDuplicate = nodes.some((node) => {
+    if (node.id === nodeId) {
+      return false;
+    }
+    const otherLabel = normalizeSentinelText(node.data.label);
+    return otherLabel.length > 0 && otherLabel === normalizedIntent;
+  });
+  if (hasDuplicate) {
+    warnings.push({
+      code: "duplicate_or_near_duplicate_intent",
+      message: "This beat looks very similar to an existing beat.",
+    });
+  }
+
+  if (normalizedTitle.length < 6 || LOCAL_GENERIC_TITLES.has(normalizedTitle)) {
+    warnings.push({
+      code: "likely_vague_beat_title",
+      message: "Beat title may be vague. Add a concrete subject or action.",
+    });
+  }
+
+  const hasContextSignal =
+    /\d/.test(`${summary} ${notes}`) ||
+    contextWords.some((word) => LOCAL_CONTEXT_KEYWORDS.has(word));
+  if (contextWords.length < 4 || !hasContextSignal) {
+    warnings.push({
+      code: "likely_missing_context_signal",
+      message: "Add who/where/when details to reduce ambiguity.",
+    });
+  }
+
+  const isGenericPattern = LOCAL_GENERIC_PATTERNS.some((pattern) =>
+    normalizedIntent.includes(pattern),
+  );
+  const recentGenericCount = nodes.reduce((count, node) => {
+    const text = normalizeSentinelText(node.data.label);
+    const matches = LOCAL_GENERIC_PATTERNS.some((pattern) =>
+      text.includes(pattern),
+    );
+    return matches ? count + 1 : count;
+  }, 0);
+  if (isGenericPattern && recentGenericCount >= 2) {
+    warnings.push({
+      code: "likely_escalation_flatness",
+      message: "Recent beats use similar patterns. Consider a stronger escalation.",
+    });
+  }
+
+  return warnings;
+};
+
 const toBeatDraft = (node: Node<StoryNodeData>): BeatDraft => ({
   id: node.id,
   title: node.data.title ?? node.data.label,
@@ -78,17 +203,21 @@ const toBeatDraft = (node: Node<StoryNodeData>): BeatDraft => ({
   notes: node.data.notes ?? "",
 });
 
-const toNode = (data: DirectorResponse): Node<StoryNodeData> => ({
-  id: data.node.id,
-  position: { x: data.node.x, y: data.node.y },
-  data: {
-    label: data.node.label,
-    title: data.node.label,
-    summary: "",
-    notes: "",
-  },
-  type: "default",
-});
+const toNode = (data: DirectorResponse): Node<StoryNodeData> => {
+  const sentinelWarnings = data.story_sentinel?.warnings ?? [];
+  return {
+    id: data.node.id,
+    position: { x: data.node.x, y: data.node.y },
+    data: {
+      label: data.node.label,
+      title: data.node.label,
+      summary: "",
+      notes: "",
+      sentinelWarnings,
+    },
+    type: "default",
+  };
+};
 
 export default function App() {
   const [directorText, setDirectorText] = useState("Director offline.");
@@ -101,6 +230,9 @@ export default function App() {
   const [voiceError, setVoiceError] = useState("");
   const [lastTranscript, setLastTranscript] = useState("");
   const [beatDraft, setBeatDraft] = useState<BeatDraft | null>(null);
+  const [latestSentinelWarnings, setLatestSentinelWarnings] = useState<
+    StorySentinelWarning[]
+  >([]);
   const flowRef = useRef<ReactFlowInstance | null>(null);
   const hasInitialFitRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -125,6 +257,13 @@ export default function App() {
     (beatDraft.title !== selectedBeat.title ||
       beatDraft.summary !== selectedBeat.summary ||
       beatDraft.notes !== selectedBeat.notes);
+  const selectedBeatWarnings = selectedNode?.data.sentinelWarnings ?? [];
+  const visibleSentinelWarnings = selectedNode
+    ? selectedBeatWarnings
+    : latestSentinelWarnings;
+  const sentinelScopeLabel = selectedNode
+    ? `Selected beat (${selectedNode.id})`
+    : "Most recent action";
 
   const handleFlowInit = useCallback((instance: ReactFlowInstance) => {
     flowRef.current = instance;
@@ -153,6 +292,7 @@ export default function App() {
     const data: DirectorResponse = await response.json();
     setDirectorText(data.director_response);
     setTrace(data.trace);
+    setLatestSentinelWarnings(data.story_sentinel?.warnings ?? []);
     setNodes((prev) => [
       ...prev,
       { ...toNode(data), id: `${data.node.id}-${Date.now()}` },
@@ -172,12 +312,14 @@ export default function App() {
       .then((data: DirectorResponse) => {
         setDirectorText(data.director_response);
         setTrace(data.trace);
+        setLatestSentinelWarnings(data.story_sentinel?.warnings ?? []);
         setNodes([toNode(data)]);
         setError("");
       })
       .catch((err: Error) => {
         setDirectorText("Director failed to connect.");
         setTrace(["backend_unreachable"]);
+        setLatestSentinelWarnings([]);
         setError(err.message);
       })
       .finally(() => {
@@ -237,6 +379,13 @@ export default function App() {
     const summary = beatDraft.summary.trim();
     const notes = beatDraft.notes.trim();
     const nextLabel = composeBeatLabel(title, summary);
+    const localWarnings = buildLocalSentinelWarnings({
+      nodeId: beatDraft.id,
+      title,
+      summary,
+      notes,
+      nodes,
+    });
 
     setNodes((current) =>
       current.map((node) =>
@@ -249,6 +398,7 @@ export default function App() {
                 title,
                 summary,
                 notes,
+                sentinelWarnings: localWarnings,
               },
             }
           : node,
@@ -265,8 +415,15 @@ export default function App() {
         : current,
     );
     beatEditStartedRef.current = false;
+    setLatestSentinelWarnings(localWarnings);
+    appendTraceEvent("story_sentinel_checked");
+    if (localWarnings.length > 0) {
+      appendTraceEvent("story_sentinel_warning_added");
+    } else {
+      appendTraceEvent("story_sentinel_clear");
+    }
     appendTraceEvent("beat_updated");
-  }, [appendTraceEvent, beatDraft]);
+  }, [appendTraceEvent, beatDraft, nodes]);
 
   const handleBeatCancel = useCallback(() => {
     if (!selectedNode) {
@@ -633,6 +790,39 @@ export default function App() {
           ) : (
             <p style={{ margin: 0, color: "#9aa0ad", fontSize: "14px" }}>
               No node selected.
+            </p>
+          )}
+        </section>
+
+        <section style={{ marginBottom: "24px" }}>
+          <h3 style={{ marginTop: 0, marginBottom: "8px" }}>Story Sentinel</h3>
+          <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#9aa0ad" }}>
+            Scope: {sentinelScopeLabel}
+          </p>
+          {visibleSentinelWarnings.length > 0 ? (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: "8px" }}>
+              {visibleSentinelWarnings.map((warning, index) => (
+                <li
+                  key={`${warning.code}-${index}`}
+                  style={{
+                    border: "1px solid #5a4b2a",
+                    borderRadius: "8px",
+                    background: "#2a2418",
+                    padding: "8px",
+                  }}
+                >
+                  <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#e9d8a6" }}>
+                    {warning.code}
+                  </p>
+                  <p style={{ margin: 0, fontSize: "13px", lineHeight: 1.4 }}>
+                    {warning.message}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={{ margin: 0, color: "#9aa0ad", fontSize: "14px" }}>
+              No Story Sentinel warnings.
             </p>
           )}
         </section>

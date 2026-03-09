@@ -1,5 +1,8 @@
 import logging
 import os
+import re
+from collections import deque
+from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import Any
 
@@ -25,6 +28,15 @@ if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
 
+class StorySentinelWarning(BaseModel):
+    code: str
+    message: str
+
+
+class StorySentinelResult(BaseModel):
+    warnings: list[StorySentinelWarning]
+
+
 class DirectorNode(BaseModel):
     id: str
     label: str
@@ -37,10 +49,15 @@ class DirectorResponse(BaseModel):
     director_response: str
     trace: list[str]
     node: DirectorNode
+    story_sentinel: StorySentinelResult | None = None
 
 
 class DirectorRespondRequest(BaseModel):
     user_input: str = Field(min_length=1)
+
+
+SENTINEL_RECENT_INPUTS: deque[str] = deque(maxlen=10)
+SENTINEL_RECENT_GENERIC_FLAGS: deque[bool] = deque(maxlen=8)
 
 
 @lru_cache(maxsize=1)
@@ -85,11 +102,13 @@ def build_director_payload(
     user_input: str,
     director_response: str,
     trace: list[str],
+    story_sentinel: StorySentinelResult | None = None,
 ) -> DirectorResponse:
     return DirectorResponse(
         director_response=director_response,
         trace=trace,
         node=build_node(user_input=user_input, director_response=director_response),
+        story_sentinel=story_sentinel,
     )
 
 
@@ -114,6 +133,105 @@ def build_director_prompt(cleaned_input: str) -> str:
         "Stay concrete and cinematic.\n\n"
         f"Creator input: {cleaned_input}"
     )
+
+
+def normalize_for_sentinel(text: str) -> str:
+    collapsed = re.sub(r"[^a-z0-9 ]", " ", text.lower())
+    return " ".join(collapsed.split())
+
+
+def run_story_sentinel(user_input: str, director_response: str) -> tuple[StorySentinelResult, list[str]]:
+    cleaned_input = user_input.strip() or director_response.strip() or "story idea"
+    normalized_input = normalize_for_sentinel(cleaned_input)
+    words = normalized_input.split()
+    warnings: list[StorySentinelWarning] = []
+
+    if normalized_input:
+        for previous in SENTINEL_RECENT_INPUTS:
+            ratio = SequenceMatcher(a=previous, b=normalized_input).ratio()
+            if ratio >= 0.92:
+                warnings.append(
+                    StorySentinelWarning(
+                        code="duplicate_or_near_duplicate_intent",
+                        message="This beat intent looks very similar to a recent beat.",
+                    )
+                )
+                break
+
+    generic_titles = {
+        "beat",
+        "scene",
+        "story",
+        "next",
+        "continue",
+        "idea",
+        "moment",
+    }
+    if len(words) <= 2 or normalized_input in generic_titles:
+        warnings.append(
+            StorySentinelWarning(
+                code="likely_vague_beat_title",
+                message="Beat intent may be too vague. Add a concrete subject or action.",
+            )
+        )
+
+    context_keywords = {
+        "who",
+        "where",
+        "when",
+        "because",
+        "after",
+        "before",
+        "during",
+        "inside",
+        "outside",
+        "city",
+        "room",
+        "forest",
+        "ship",
+        "king",
+        "detective",
+    }
+    has_context_signal = bool(re.search(r"\d", cleaned_input)) or any(
+        keyword in words for keyword in context_keywords
+    )
+    if len(words) < 4 or not has_context_signal:
+        warnings.append(
+            StorySentinelWarning(
+                code="likely_missing_context_signal",
+                message="Beat may be missing context. Add who/where/when details.",
+            )
+        )
+
+    generic_patterns = {
+        "continue",
+        "next beat",
+        "something happens",
+        "move forward",
+        "keep going",
+        "what happens next",
+    }
+    is_generic_pattern = any(pattern in normalized_input for pattern in generic_patterns)
+    recent_generic = list(SENTINEL_RECENT_GENERIC_FLAGS)
+    if is_generic_pattern and len(recent_generic) >= 3 and sum(recent_generic[-3:]) >= 2:
+        warnings.append(
+            StorySentinelWarning(
+                code="likely_escalation_flatness",
+                message="Recent beats look structurally similar. Consider a sharper escalation.",
+            )
+        )
+
+    if normalized_input:
+        SENTINEL_RECENT_INPUTS.append(normalized_input)
+    SENTINEL_RECENT_GENERIC_FLAGS.append(is_generic_pattern)
+
+    trace = ["story_sentinel_checked"]
+    if warnings:
+        trace.append("story_sentinel_warning_added")
+    else:
+        trace.append("story_sentinel_clear")
+
+    return StorySentinelResult(warnings=warnings), trace
 
 
 def extract_live_text(live_event: Any) -> str:
@@ -259,8 +377,13 @@ def director_ping() -> DirectorResponse:
 @app.post("/director/respond", response_model=DirectorResponse)
 def director_respond(payload: DirectorRespondRequest) -> DirectorResponse:
     director_response, trace = generate_director_response(payload.user_input)
+    story_sentinel, sentinel_trace = run_story_sentinel(
+        user_input=payload.user_input,
+        director_response=director_response,
+    )
     return build_director_payload(
         user_input=payload.user_input,
         director_response=director_response,
-        trace=trace,
+        trace=[*trace, *sentinel_trace],
+        story_sentinel=story_sentinel,
     )

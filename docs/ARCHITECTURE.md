@@ -5,6 +5,7 @@
 - React Flow
 - right-side Character Lab panel
 - right-side Selected Beat editor (id, title, summary, notes, save/cancel)
+- right-side Story Sentinel warning section for selected beat or most recent action
 - bottom timeline drawer
 - left rail scratchpad
 - Trace View overlay
@@ -20,6 +21,7 @@
 - `.env` configuration via `GEMINI_API_KEY`, `GEMINI_TEXT_MODEL`, `GEMINI_LIVE_MODEL`, and `USE_LIVE_DIRECTOR`
 - model-call trace events for started/completed/failed with safe fallback on errors
 - live-session trace events for started/input/output/closed/failed with safe fallback to non-live path
+- Story Sentinel heuristic checks on `/director/respond` with warning payload + trace events (`story_sentinel_checked`, `story_sentinel_warning_added`, `story_sentinel_clear`)
 
 ## Model routing
 - Gemini text model: Director beat response generation (`/director/respond`)
