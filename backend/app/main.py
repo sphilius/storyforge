@@ -37,12 +37,22 @@ class StorySentinelResult(BaseModel):
     warnings: list[StorySentinelWarning]
 
 
+class LorePool(BaseModel):
+    character: list[str] = Field(default_factory=list)
+    setting: list[str] = Field(default_factory=list)
+    event: list[str] = Field(default_factory=list)
+    theme: list[str] = Field(default_factory=list)
+    backstory: list[str] = Field(default_factory=list)
+    prop: list[str] = Field(default_factory=list)
+
+
 class DirectorNode(BaseModel):
     id: str
     label: str
     type: str
     x: int
     y: int
+    lore_pool: LorePool = Field(default_factory=LorePool)
 
 
 class DirectorResponse(BaseModel):
@@ -80,7 +90,11 @@ def is_live_director_enabled() -> bool:
     return raw_value in {"1", "true", "yes", "on"}
 
 
-def build_node(user_input: str, director_response: str) -> DirectorNode:
+def build_node(
+    user_input: str,
+    director_response: str,
+    lore_pool: LorePool | None = None,
+) -> DirectorNode:
     cleaned_input = user_input.strip()
     seed_text = cleaned_input if cleaned_input else director_response.strip()
     if not seed_text:
@@ -95,6 +109,7 @@ def build_node(user_input: str, director_response: str) -> DirectorNode:
         type="story",
         x=180 + (checksum % 220),
         y=100 + ((checksum // 3) % 220),
+        lore_pool=lore_pool if lore_pool is not None else LorePool(),
     )
 
 
@@ -103,11 +118,16 @@ def build_director_payload(
     director_response: str,
     trace: list[str],
     story_sentinel: StorySentinelResult | None = None,
+    lore_pool: LorePool | None = None,
 ) -> DirectorResponse:
     return DirectorResponse(
         director_response=director_response,
         trace=trace,
-        node=build_node(user_input=user_input, director_response=director_response),
+        node=build_node(
+            user_input=user_input,
+            director_response=director_response,
+            lore_pool=lore_pool,
+        ),
         story_sentinel=story_sentinel,
     )
 
@@ -232,6 +252,27 @@ def run_story_sentinel(user_input: str, director_response: str) -> tuple[StorySe
         trace.append("story_sentinel_clear")
 
     return StorySentinelResult(warnings=warnings), trace
+
+
+LORE_ANCHOR_FIELDS = ("character", "setting", "event", "theme", "backstory", "prop")
+LORE_PATTERN = re.compile(
+    r"(?:^|[,;])\s*(character|setting|event|theme|backstory|prop)\s*:\s*([^,;]+)",
+    re.IGNORECASE,
+)
+
+
+def extract_lore_pool(user_input: str) -> LorePool:
+    anchors: dict[str, list[str]] = {field: [] for field in LORE_ANCHOR_FIELDS}
+
+    for anchor_type, raw_value in LORE_PATTERN.findall(user_input):
+        anchor_key = anchor_type.strip().lower()
+        anchor_value = raw_value.strip()
+        if not anchor_value:
+            continue
+        if anchor_value not in anchors[anchor_key]:
+            anchors[anchor_key].append(anchor_value)
+
+    return LorePool(**anchors)
 
 
 def extract_live_text(live_event: Any) -> str:
@@ -381,9 +422,11 @@ def director_respond(payload: DirectorRespondRequest) -> DirectorResponse:
         user_input=payload.user_input,
         director_response=director_response,
     )
+    lore_pool = extract_lore_pool(payload.user_input)
     return build_director_payload(
         user_input=payload.user_input,
         director_response=director_response,
         trace=[*trace, *sentinel_trace],
         story_sentinel=story_sentinel,
+        lore_pool=lore_pool,
     )

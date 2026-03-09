@@ -7,29 +7,30 @@
 4. Slice 4a: Gemini-backed Director response in backend (`/director/respond`)
 5. Slice 4b: optional Gemini Live session path in backend (`/director/respond` with fallback)
 6. Slice 5a: Story Sentinel warnings (backend heuristic checks + right-panel warning layer)
-7. Async storyboard generation
-8. Trace View / Director Overlay
-9. Character Interview Mode
-10. Import flow
-11. Flexible lore pool + soft three-clue rule
+7. Slice 5b: flexible lore pool metadata + selected beat lore editing
+8. Async storyboard generation
+9. Trace View / Director Overlay
+10. Character Interview Mode
+11. Import flow
+12. Flexible lore pool + soft three-clue rule
 
 ## Tier 2
-12. Timeline scrubber / replay
-13. Mode switching
-14. Export pack
-15. Pacing Map
-16. Color Script Mode
-17. Trait suggestion bubbles
+13. Timeline scrubber / replay
+14. Mode switching
+15. Export pack
+16. Pacing Map
+17. Color Script Mode
+18. Trait suggestion bubbles
 
 ## Tier 3
-18. Animatic button
-19. Mood bed
-20. Grounding
-21. Expression update per turn from cached expressions
+19. Animatic button
+20. Mood bed
+21. Grounding
+22. Expression update per turn from cached expressions
 
 ## Post-contest
-22. 2.5D lore tableau
-23. Multi-character simultaneous voice
-24. Persona authoring UI
-25. Explainability studio
-26. Advanced worker orchestration
+23. 2.5D lore tableau
+24. Multi-character simultaneous voice
+25. Persona authoring UI
+26. Explainability studio
+27. Advanced worker orchestration

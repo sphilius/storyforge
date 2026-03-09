@@ -13,6 +13,19 @@ type StorySentinelData = {
   warnings: StorySentinelWarning[];
 };
 
+type LorePool = {
+  character: string[];
+  setting: string[];
+  event: string[];
+  theme: string[];
+  backstory: string[];
+  prop: string[];
+};
+
+type LoreAnchorType = keyof LorePool;
+
+type LoreDraft = Record<LoreAnchorType, string>;
+
 type DirectorResponse = {
   director_response: string;
   trace: string[];
@@ -23,6 +36,7 @@ type DirectorResponse = {
     type: string;
     x: number;
     y: number;
+    lore_pool?: Partial<LorePool>;
   };
 };
 
@@ -32,6 +46,7 @@ type StoryNodeData = {
   summary?: string;
   notes?: string;
   sentinelWarnings?: StorySentinelWarning[];
+  lorePool: LorePool;
 };
 
 type VoiceStatus = "idle" | "listening" | "processing" | "unsupported" | "error";
@@ -41,7 +56,10 @@ type BeatDraft = {
   title: string;
   summary: string;
   notes: string;
+  loreDraft: LoreDraft;
 };
+
+type BeatTextField = "title" | "summary" | "notes";
 
 type SpeechRecognitionResultLike = {
   transcript: string;
@@ -81,6 +99,75 @@ const composeBeatLabel = (title: string, summary: string): string => {
     ? `${normalizedTitle}: ${normalizedSummary}`
     : normalizedTitle;
 };
+
+const LORE_ANCHOR_TYPES: LoreAnchorType[] = [
+  "character",
+  "setting",
+  "event",
+  "theme",
+  "backstory",
+  "prop",
+];
+
+const LORE_ANCHOR_LABELS: Record<LoreAnchorType, string> = {
+  character: "Character",
+  setting: "Setting",
+  event: "Event",
+  theme: "Theme",
+  backstory: "Backstory",
+  prop: "Prop",
+};
+
+const createEmptyLorePool = (): LorePool => ({
+  character: [],
+  setting: [],
+  event: [],
+  theme: [],
+  backstory: [],
+  prop: [],
+});
+
+const normalizeLorePool = (lorePool?: Partial<LorePool>): LorePool => {
+  const normalized = createEmptyLorePool();
+  for (const anchorType of LORE_ANCHOR_TYPES) {
+    const value = lorePool?.[anchorType];
+    normalized[anchorType] = Array.isArray(value)
+      ? value.map((item) => item.trim()).filter(Boolean)
+      : [];
+  }
+  return normalized;
+};
+
+const lorePoolToDraft = (lorePool: LorePool): LoreDraft => ({
+  character: lorePool.character.join(", "),
+  setting: lorePool.setting.join(", "),
+  event: lorePool.event.join(", "),
+  theme: lorePool.theme.join(", "),
+  backstory: lorePool.backstory.join(", "),
+  prop: lorePool.prop.join(", "),
+});
+
+const parseLoreField = (value: string): string[] =>
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const loreDraftToPool = (loreDraft: LoreDraft): LorePool => ({
+  character: parseLoreField(loreDraft.character),
+  setting: parseLoreField(loreDraft.setting),
+  event: parseLoreField(loreDraft.event),
+  theme: parseLoreField(loreDraft.theme),
+  backstory: parseLoreField(loreDraft.backstory),
+  prop: parseLoreField(loreDraft.prop),
+});
+
+const areLoreDraftsEqual = (a: LoreDraft, b: LoreDraft): boolean =>
+  LORE_ANCHOR_TYPES.every(
+    (anchorType) =>
+      parseLoreField(a[anchorType]).join("|") ===
+      parseLoreField(b[anchorType]).join("|"),
+  );
 
 const normalizeSentinelText = (value: string): string =>
   value
@@ -201,10 +288,12 @@ const toBeatDraft = (node: Node<StoryNodeData>): BeatDraft => ({
   title: node.data.title ?? node.data.label,
   summary: node.data.summary ?? "",
   notes: node.data.notes ?? "",
+  loreDraft: lorePoolToDraft(node.data.lorePool),
 });
 
 const toNode = (data: DirectorResponse): Node<StoryNodeData> => {
   const sentinelWarnings = data.story_sentinel?.warnings ?? [];
+  const lorePool = normalizeLorePool(data.node.lore_pool);
   return {
     id: data.node.id,
     position: { x: data.node.x, y: data.node.y },
@@ -214,6 +303,7 @@ const toNode = (data: DirectorResponse): Node<StoryNodeData> => {
       summary: "",
       notes: "",
       sentinelWarnings,
+      lorePool,
     },
     type: "default",
   };
@@ -256,7 +346,8 @@ export default function App() {
     !!selectedBeat &&
     (beatDraft.title !== selectedBeat.title ||
       beatDraft.summary !== selectedBeat.summary ||
-      beatDraft.notes !== selectedBeat.notes);
+      beatDraft.notes !== selectedBeat.notes ||
+      !areLoreDraftsEqual(beatDraft.loreDraft, selectedBeat.loreDraft));
   const selectedBeatWarnings = selectedNode?.data.sentinelWarnings ?? [];
   const visibleSentinelWarnings = selectedNode
     ? selectedBeatWarnings
@@ -351,10 +442,11 @@ export default function App() {
 
     setBeatDraft(toBeatDraft(selectedNode));
     appendTraceEvent("node_selected");
+    appendTraceEvent("lore_viewed");
   }, [appendTraceEvent, selectedNode]);
 
   const handleBeatFieldChange = useCallback(
-    (field: keyof Omit<BeatDraft, "id">, value: string) => {
+    (field: BeatTextField, value: string) => {
       if (!beatEditStartedRef.current) {
         beatEditStartedRef.current = true;
         appendTraceEvent("beat_edit_started");
@@ -370,6 +462,29 @@ export default function App() {
     [appendTraceEvent],
   );
 
+  const handleLoreFieldChange = useCallback(
+    (anchorType: LoreAnchorType, value: string) => {
+      if (!beatEditStartedRef.current) {
+        beatEditStartedRef.current = true;
+        appendTraceEvent("beat_edit_started");
+      }
+
+      setBeatDraft((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          loreDraft: {
+            ...current.loreDraft,
+            [anchorType]: value,
+          },
+        };
+      });
+    },
+    [appendTraceEvent],
+  );
+
   const handleBeatSave = useCallback(() => {
     if (!beatDraft) {
       return;
@@ -378,7 +493,12 @@ export default function App() {
     const title = beatDraft.title.trim() || "Untitled Beat";
     const summary = beatDraft.summary.trim();
     const notes = beatDraft.notes.trim();
+    const lorePool = loreDraftToPool(beatDraft.loreDraft);
+    const normalizedLoreDraft = lorePoolToDraft(lorePool);
     const nextLabel = composeBeatLabel(title, summary);
+    const loreChanged =
+      !selectedBeat ||
+      !areLoreDraftsEqual(normalizedLoreDraft, selectedBeat.loreDraft);
     const localWarnings = buildLocalSentinelWarnings({
       nodeId: beatDraft.id,
       title,
@@ -399,6 +519,7 @@ export default function App() {
                 summary,
                 notes,
                 sentinelWarnings: localWarnings,
+                lorePool,
               },
             }
           : node,
@@ -411,6 +532,7 @@ export default function App() {
             title,
             summary,
             notes,
+            loreDraft: normalizedLoreDraft,
           }
         : current,
     );
@@ -422,8 +544,11 @@ export default function App() {
     } else {
       appendTraceEvent("story_sentinel_clear");
     }
+    if (loreChanged) {
+      appendTraceEvent("lore_updated");
+    }
     appendTraceEvent("beat_updated");
-  }, [appendTraceEvent, beatDraft, nodes]);
+  }, [appendTraceEvent, beatDraft, nodes, selectedBeat]);
 
   const handleBeatCancel = useCallback(() => {
     if (!selectedNode) {
@@ -752,6 +877,49 @@ export default function App() {
                   }}
                 />
               </label>
+
+              <section
+                style={{
+                  border: "1px solid #2b2f3a",
+                  borderRadius: "8px",
+                  padding: "8px",
+                  background: "#0f1115",
+                  display: "grid",
+                  gap: "8px",
+                }}
+              >
+                <p style={{ margin: 0, fontSize: "12px", color: "#9aa0ad" }}>
+                  Lore (comma-separated per field)
+                </p>
+                {LORE_ANCHOR_TYPES.map((anchorType) => (
+                  <label
+                    key={anchorType}
+                    style={{
+                      display: "grid",
+                      gap: "4px",
+                      fontSize: "12px",
+                      color: "#9aa0ad",
+                    }}
+                  >
+                    {LORE_ANCHOR_LABELS[anchorType]}
+                    <input
+                      value={beatDraft.loreDraft[anchorType]}
+                      onChange={(event) =>
+                        handleLoreFieldChange(anchorType, event.target.value)
+                      }
+                      placeholder="comma-separated values"
+                      style={{
+                        height: "28px",
+                        borderRadius: "6px",
+                        border: "1px solid #2b2f3a",
+                        background: "#111318",
+                        color: "#f5f7fa",
+                        padding: "0 8px",
+                      }}
+                    />
+                  </label>
+                ))}
+              </section>
 
               <div style={{ display: "flex", gap: "8px" }}>
                 <button

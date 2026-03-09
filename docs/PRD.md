@@ -12,7 +12,7 @@ Deliver one coherent, legible, technically credible live demo loop for the Gemin
 3. Trace View shows what the system is doing
 4. Story graph updates on the canvas
 5. Story Sentinel surfaces compact continuity/logic warnings
-6. User selects a beat and edits title/summary/notes in the right panel
+6. User selects a beat and edits title/summary/notes + lore anchors in the right panel
 7. Storyboard frames appear asynchronously
 8. User interrupts, revises, and continues
 
@@ -29,6 +29,7 @@ Deliver one coherent, legible, technically credible live demo loop for the Gemin
 - Selected beat inspection + editing in right panel (frontend-only for now)
 - Gemini-backed Director text response in backend (`/director/respond`)
 - Story Sentinel warning layer (lightweight heuristic checks + visible right-panel warnings)
+- Flexible lore pool per beat (character, setting, event, theme, backstory, prop)
 - Async storyboard generation
 - Trace View
 - Character Interview Mode (1 active character)
