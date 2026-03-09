@@ -9,29 +9,30 @@
 6. Slice 5a: Story Sentinel warnings (backend heuristic checks + right-panel warning layer)
 7. Slice 5b: flexible lore pool metadata + selected beat lore editing
 8. Slice 5.3: soft three-clue rule suggestions (lore richness + recent overlap)
-9. Async storyboard generation
-10. Trace View / Director Overlay
-11. Character Interview Mode
-12. Import flow
-13. Flexible lore pool + soft three-clue rule
+9. Slice 7a: beat -> storyboard request initiation (selected beat + mock backend job)
+10. Async storyboard generation
+11. Trace View / Director Overlay
+12. Character Interview Mode
+13. Import flow
+14. Flexible lore pool + soft three-clue rule
 
 ## Tier 2
-14. Timeline scrubber / replay
-15. Mode switching
-16. Export pack
-17. Pacing Map
-18. Color Script Mode
-19. Trait suggestion bubbles
+15. Timeline scrubber / replay
+16. Mode switching
+17. Export pack
+18. Pacing Map
+19. Color Script Mode
+20. Trait suggestion bubbles
 
 ## Tier 3
-20. Animatic button
-21. Mood bed
-22. Grounding
-23. Expression update per turn from cached expressions
+21. Animatic button
+22. Mood bed
+23. Grounding
+24. Expression update per turn from cached expressions
 
 ## Post-contest
-24. 2.5D lore tableau
-25. Multi-character simultaneous voice
-26. Persona authoring UI
-27. Explainability studio
-28. Advanced worker orchestration
+25. 2.5D lore tableau
+26. Multi-character simultaneous voice
+27. Persona authoring UI
+28. Explainability studio
+29. Advanced worker orchestration

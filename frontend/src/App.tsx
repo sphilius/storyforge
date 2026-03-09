@@ -26,6 +26,25 @@ type LoreAnchorType = keyof LorePool;
 
 type LoreDraft = Record<LoreAnchorType, string>;
 
+type StoryboardStatus = "not_requested" | "generating" | "requested";
+
+type StoryboardRequestPayload = {
+  beat_id: string;
+  beat_label: string;
+  beat_title: string;
+  beat_summary: string;
+  beat_notes: string;
+  lore_pool: LorePool;
+};
+
+type StoryboardRequestResponse = {
+  job_id: string;
+  beat_id: string;
+  status: "requested" | "generating";
+  trace: string[];
+  message: string;
+};
+
 type DirectorResponse = {
   director_response: string;
   trace: string[];
@@ -47,6 +66,7 @@ type StoryNodeData = {
   notes?: string;
   sentinelWarnings?: StorySentinelWarning[];
   lorePool: LorePool;
+  storyboardStatus: StoryboardStatus;
 };
 
 type VoiceStatus = "idle" | "listening" | "processing" | "unsupported" | "error";
@@ -116,6 +136,12 @@ const LORE_ANCHOR_LABELS: Record<LoreAnchorType, string> = {
   theme: "Theme",
   backstory: "Backstory",
   prop: "Prop",
+};
+
+const STORYBOARD_STATUS_LABELS: Record<StoryboardStatus, string> = {
+  not_requested: "Not requested",
+  generating: "Generating",
+  requested: "Requested",
 };
 
 const createEmptyLorePool = (): LorePool => ({
@@ -382,6 +408,7 @@ const toNode = (data: DirectorResponse): Node<StoryNodeData> => {
       notes: "",
       sentinelWarnings,
       lorePool,
+      storyboardStatus: "not_requested",
     },
     type: "default",
   };
@@ -433,6 +460,8 @@ export default function App() {
   const sentinelScopeLabel = selectedNode
     ? `Selected beat (${selectedNode.id})`
     : "Most recent action";
+  const selectedStoryboardStatus: StoryboardStatus =
+    selectedNode?.data.storyboardStatus ?? "not_requested";
 
   const handleFlowInit = useCallback((instance: ReactFlowInstance) => {
     flowRef.current = instance;
@@ -648,6 +677,107 @@ export default function App() {
     beatEditStartedRef.current = false;
     setBeatDraft(toBeatDraft(selectedNode));
   }, [selectedNode]);
+
+  const handleGenerateStoryboard = useCallback(async () => {
+    if (!selectedNode || !beatDraft) {
+      return;
+    }
+
+    const title = beatDraft.title.trim() || "Untitled Beat";
+    const summary = beatDraft.summary.trim();
+    const notes = beatDraft.notes.trim();
+    const lorePool = loreDraftToPool(beatDraft.loreDraft);
+    const beatLabel = composeBeatLabel(title, summary);
+
+    appendTraceEvent("storyboard_requested");
+    setNodes((current) =>
+      current.map((node) =>
+        node.id === selectedNode.id
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                storyboardStatus: "generating",
+              },
+            }
+          : node,
+      ),
+    );
+
+    try {
+      const payload: StoryboardRequestPayload = {
+        beat_id: selectedNode.id,
+        beat_label: beatLabel,
+        beat_title: title,
+        beat_summary: summary,
+        beat_notes: notes,
+        lore_pool: lorePool,
+      };
+
+      const response = await fetch("http://localhost:8000/storyboard/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        let errorTrace: string[] = [];
+        try {
+          const errorPayload = (await response.json()) as {
+            detail?: { trace?: string[]; message?: string } | string;
+          };
+          if (
+            typeof errorPayload.detail === "object" &&
+            errorPayload.detail &&
+            Array.isArray(errorPayload.detail.trace)
+          ) {
+            errorTrace = errorPayload.detail.trace;
+          }
+        } catch {
+          // keep fallback error handling minimal
+        }
+
+        if (errorTrace.length > 0) {
+          setTrace((current) => [...current, ...errorTrace]);
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data: StoryboardRequestResponse = await response.json();
+      setTrace((current) => [...current, ...data.trace]);
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === selectedNode.id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  storyboardStatus: data.status,
+                },
+              }
+            : node,
+        ),
+      );
+      setError("");
+    } catch (err) {
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === selectedNode.id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  storyboardStatus: "not_requested",
+                },
+              }
+            : node,
+        ),
+      );
+      appendTraceEvent("storyboard_request_failed");
+      const message = err instanceof Error ? err.message : "Storyboard request failed.";
+      setError(message);
+    }
+  }, [appendTraceEvent, beatDraft, selectedNode]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1009,6 +1139,41 @@ export default function App() {
                     />
                   </label>
                 ))}
+              </section>
+
+              <section
+                style={{
+                  border: "1px solid #2b2f3a",
+                  borderRadius: "8px",
+                  padding: "8px",
+                  background: "#0f1115",
+                  display: "grid",
+                  gap: "8px",
+                }}
+              >
+                <p style={{ margin: 0, fontSize: "12px", color: "#9aa0ad" }}>
+                  Storyboard Status: {STORYBOARD_STATUS_LABELS[selectedStoryboardStatus]}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleGenerateStoryboard}
+                  disabled={selectedStoryboardStatus === "generating"}
+                  style={{
+                    height: "30px",
+                    borderRadius: "6px",
+                    border: "1px solid #3c4252",
+                    background:
+                      selectedStoryboardStatus === "generating" ? "#1a1e27" : "#223244",
+                    color: "#f5f7fa",
+                    padding: "0 10px",
+                    cursor:
+                      selectedStoryboardStatus === "generating" ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {selectedStoryboardStatus === "generating"
+                    ? "Generating..."
+                    : "Generate Storyboard"}
+                </button>
               </section>
 
               <div style={{ display: "flex", gap: "8px" }}>

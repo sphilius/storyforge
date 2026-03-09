@@ -1,10 +1,11 @@
 import logging
 import os
 import re
+import time
 from collections import deque
 from difflib import SequenceMatcher
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 try:
     from dotenv import load_dotenv
@@ -12,7 +13,7 @@ except ImportError:
     def load_dotenv() -> None:
         return None
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -64,6 +65,23 @@ class DirectorResponse(BaseModel):
 
 class DirectorRespondRequest(BaseModel):
     user_input: str = Field(min_length=1)
+
+
+class StoryboardRequestPayload(BaseModel):
+    beat_id: str = Field(min_length=1)
+    beat_label: str = ""
+    beat_title: str = ""
+    beat_summary: str = ""
+    beat_notes: str = ""
+    lore_pool: LorePool = Field(default_factory=LorePool)
+
+
+class StoryboardRequestResponse(BaseModel):
+    job_id: str
+    beat_id: str
+    status: Literal["requested", "generating"]
+    trace: list[str]
+    message: str
 
 
 SENTINEL_RECENT_INPUTS: deque[str] = deque(maxlen=10)
@@ -509,3 +527,46 @@ def director_respond(payload: DirectorRespondRequest) -> DirectorResponse:
         story_sentinel=StorySentinelResult(warnings=combined_warnings),
         lore_pool=lore_pool,
     )
+
+
+@app.post("/storyboard/request", response_model=StoryboardRequestResponse)
+def storyboard_request(payload: StoryboardRequestPayload) -> StoryboardRequestResponse:
+    try:
+        beat_id = payload.beat_id.strip()
+        if not beat_id:
+            raise ValueError("beat_id is required.")
+
+        context_seed = "|".join(
+            [
+                beat_id,
+                payload.beat_label.strip(),
+                payload.beat_title.strip(),
+                payload.beat_summary.strip(),
+                ",".join(payload.lore_pool.character),
+                ",".join(payload.lore_pool.setting),
+                ",".join(payload.lore_pool.event),
+            ]
+        )
+        checksum = sum(ord(char) for char in context_seed)
+        job_id = f"storyboard-{checksum % 100000}-{int(time.time())}"
+
+        logger.info("storyboard_generation_started beat_id=%s", beat_id)
+        return StoryboardRequestResponse(
+            job_id=job_id,
+            beat_id=beat_id,
+            status="requested",
+            trace=["storyboard_generation_started"],
+            message="Storyboard request accepted (mock).",
+        )
+    except ValueError as err:
+        logger.warning("storyboard_request_failed: %s", err)
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(err), "trace": ["storyboard_request_failed"]},
+        ) from err
+    except Exception as err:
+        logger.exception("storyboard_request_failed")
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "Storyboard request failed.", "trace": ["storyboard_request_failed"]},
+        ) from err
