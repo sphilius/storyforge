@@ -68,6 +68,7 @@ class DirectorRespondRequest(BaseModel):
 
 SENTINEL_RECENT_INPUTS: deque[str] = deque(maxlen=10)
 SENTINEL_RECENT_GENERIC_FLAGS: deque[bool] = deque(maxlen=8)
+SENTINEL_RECENT_LORE_TERMS: deque[set[str]] = deque(maxlen=8)
 
 
 @lru_cache(maxsize=1)
@@ -275,6 +276,74 @@ def extract_lore_pool(user_input: str) -> LorePool:
     return LorePool(**anchors)
 
 
+def normalize_lore_term(value: str) -> str:
+    collapsed = re.sub(r"[^a-z0-9 ]", " ", value.lower())
+    return " ".join(collapsed.split())
+
+
+def get_lore_term_set(lore_pool: LorePool) -> set[str]:
+    terms: set[str] = set()
+    for anchor_type in LORE_ANCHOR_FIELDS:
+        for item in getattr(lore_pool, anchor_type):
+            normalized_item = normalize_lore_term(item)
+            if normalized_item:
+                terms.add(normalized_item)
+    return terms
+
+
+def run_three_clue_rule(lore_pool: LorePool) -> tuple[list[StorySentinelWarning], list[str]]:
+    trace = ["three_clue_check_started"]
+    suggestions: list[StorySentinelWarning] = []
+
+    populated_anchor_count = sum(
+        1 for anchor_type in LORE_ANCHOR_FIELDS if getattr(lore_pool, anchor_type)
+    )
+    hard_anchor_count = sum(
+        1 for anchor_type in ("character", "setting", "event") if getattr(lore_pool, anchor_type)
+    )
+
+    current_terms = get_lore_term_set(lore_pool)
+    recent_term_sets = list(SENTINEL_RECENT_LORE_TERMS)
+    has_recent_lore = len(recent_term_sets) > 0
+    overlap_found = bool(current_terms) and any(
+        bool(current_terms.intersection(previous_terms)) for previous_terms in recent_term_sets
+    )
+
+    if populated_anchor_count <= 1:
+        suggestions.append(
+            StorySentinelWarning(
+                code="three_clue_underconnected",
+                message="This beat may be underconnected. Consider adding another connective clue.",
+            )
+        )
+
+    if hard_anchor_count == 0:
+        suggestions.append(
+            StorySentinelWarning(
+                code="three_clue_missing_hard_anchor",
+                message="Consider adding a character, setting, or event anchor.",
+            )
+        )
+
+    if has_recent_lore and not overlap_found:
+        suggestions.append(
+            StorySentinelWarning(
+                code="three_clue_low_overlap",
+                message="This beat has low overlap with recent lore. Add a connective anchor for continuity.",
+            )
+        )
+
+    if current_terms:
+        SENTINEL_RECENT_LORE_TERMS.append(current_terms)
+
+    if suggestions:
+        trace.append("three_clue_rule_suggestion_added")
+    else:
+        trace.append("three_clue_rule_clear")
+
+    return suggestions, trace
+
+
 def extract_live_text(live_event: Any) -> str:
     event_text = getattr(live_event, "text", None)
     if isinstance(event_text, str) and event_text.strip():
@@ -418,15 +487,25 @@ def director_ping() -> DirectorResponse:
 @app.post("/director/respond", response_model=DirectorResponse)
 def director_respond(payload: DirectorRespondRequest) -> DirectorResponse:
     director_response, trace = generate_director_response(payload.user_input)
+    lore_pool = extract_lore_pool(payload.user_input)
     story_sentinel, sentinel_trace = run_story_sentinel(
         user_input=payload.user_input,
         director_response=director_response,
     )
-    lore_pool = extract_lore_pool(payload.user_input)
+    three_clue_suggestions, three_clue_trace = run_three_clue_rule(lore_pool)
+    combined_warnings = [*story_sentinel.warnings, *three_clue_suggestions]
+    normalized_sentinel_trace = [
+        event
+        for event in sentinel_trace
+        if event not in {"story_sentinel_warning_added", "story_sentinel_clear"}
+    ]
+    normalized_sentinel_trace.append(
+        "story_sentinel_warning_added" if combined_warnings else "story_sentinel_clear"
+    )
     return build_director_payload(
         user_input=payload.user_input,
         director_response=director_response,
-        trace=[*trace, *sentinel_trace],
-        story_sentinel=story_sentinel,
+        trace=[*trace, *normalized_sentinel_trace, *three_clue_trace],
+        story_sentinel=StorySentinelResult(warnings=combined_warnings),
         lore_pool=lore_pool,
     )

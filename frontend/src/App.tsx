@@ -169,6 +169,84 @@ const areLoreDraftsEqual = (a: LoreDraft, b: LoreDraft): boolean =>
       parseLoreField(b[anchorType]).join("|"),
   );
 
+const normalizeLoreTerm = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const getLoreTermSet = (lorePool: LorePool): Set<string> => {
+  const terms = new Set<string>();
+  for (const anchorType of LORE_ANCHOR_TYPES) {
+    for (const item of lorePool[anchorType]) {
+      const normalized = normalizeLoreTerm(item);
+      if (normalized) {
+        terms.add(normalized);
+      }
+    }
+  }
+  return terms;
+};
+
+const buildLocalThreeClueSuggestions = ({
+  nodeId,
+  lorePool,
+  nodes,
+}: {
+  nodeId: string;
+  lorePool: LorePool;
+  nodes: Node<StoryNodeData>[];
+}): StorySentinelWarning[] => {
+  const suggestions: StorySentinelWarning[] = [];
+  const populatedAnchorCount = LORE_ANCHOR_TYPES.filter(
+    (anchorType) => lorePool[anchorType].length > 0,
+  ).length;
+  const hardAnchorCount = (["character", "setting", "event"] as const).filter(
+    (anchorType) => lorePool[anchorType].length > 0,
+  ).length;
+
+  const currentTerms = getLoreTermSet(lorePool);
+  const recentTermSets = nodes
+    .filter((node) => node.id !== nodeId)
+    .map((node) => getLoreTermSet(node.data.lorePool))
+    .filter((set) => set.size > 0);
+  const hasRecentLore = recentTermSets.length > 0;
+  const overlapFound =
+    currentTerms.size > 0 &&
+    recentTermSets.some((previousTerms) =>
+      [...currentTerms].some((term) => previousTerms.has(term)),
+    );
+
+  if (populatedAnchorCount <= 1) {
+    suggestions.push({
+      code: "three_clue_underconnected",
+      message:
+        "This beat may be underconnected. Consider adding another connective clue.",
+    });
+  }
+
+  if (hardAnchorCount === 0) {
+    suggestions.push({
+      code: "three_clue_missing_hard_anchor",
+      message: "Consider adding a character, setting, or event anchor.",
+    });
+  }
+
+  if (hasRecentLore && !overlapFound) {
+    suggestions.push({
+      code: "three_clue_low_overlap",
+      message:
+        "Low overlap with recent lore. Add a connective anchor to strengthen continuity.",
+    });
+  }
+
+  return suggestions;
+};
+
+const isThreeClueSuggestion = (warning: StorySentinelWarning): boolean =>
+  warning.code.startsWith("three_clue_");
+
 const normalizeSentinelText = (value: string): string =>
   value
     .toLowerCase()
@@ -506,6 +584,12 @@ export default function App() {
       notes,
       nodes,
     });
+    const threeClueSuggestions = buildLocalThreeClueSuggestions({
+      nodeId: beatDraft.id,
+      lorePool,
+      nodes,
+    });
+    const combinedWarnings = [...localWarnings, ...threeClueSuggestions];
 
     setNodes((current) =>
       current.map((node) =>
@@ -518,7 +602,7 @@ export default function App() {
                 title,
                 summary,
                 notes,
-                sentinelWarnings: localWarnings,
+                sentinelWarnings: combinedWarnings,
                 lorePool,
               },
             }
@@ -537,12 +621,18 @@ export default function App() {
         : current,
     );
     beatEditStartedRef.current = false;
-    setLatestSentinelWarnings(localWarnings);
+    setLatestSentinelWarnings(combinedWarnings);
     appendTraceEvent("story_sentinel_checked");
-    if (localWarnings.length > 0) {
+    if (combinedWarnings.length > 0) {
       appendTraceEvent("story_sentinel_warning_added");
     } else {
       appendTraceEvent("story_sentinel_clear");
+    }
+    appendTraceEvent("three_clue_check_started");
+    if (threeClueSuggestions.length > 0) {
+      appendTraceEvent("three_clue_rule_suggestion_added");
+    } else {
+      appendTraceEvent("three_clue_rule_clear");
     }
     if (loreChanged) {
       appendTraceEvent("lore_updated");
@@ -973,13 +1063,33 @@ export default function App() {
                 <li
                   key={`${warning.code}-${index}`}
                   style={{
-                    border: "1px solid #5a4b2a",
+                    border: isThreeClueSuggestion(warning)
+                      ? "1px solid #2a4f67"
+                      : "1px solid #5a4b2a",
                     borderRadius: "8px",
-                    background: "#2a2418",
+                    background: isThreeClueSuggestion(warning) ? "#172733" : "#2a2418",
                     padding: "8px",
                   }}
                 >
-                  <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#e9d8a6" }}>
+                  <p
+                    style={{
+                      margin: "0 0 4px",
+                      fontSize: "12px",
+                      color: isThreeClueSuggestion(warning) ? "#a9d6f3" : "#e9d8a6",
+                    }}
+                  >
+                    {isThreeClueSuggestion(warning)
+                      ? "Soft Three-Clue Suggestion"
+                      : "Story Sentinel Warning"}
+                  </p>
+                  <p
+                    style={{
+                      margin: "0 0 4px",
+                      fontSize: "11px",
+                      color: "#9aa0ad",
+                      textTransform: "uppercase",
+                    }}
+                  >
                     {warning.code}
                   </p>
                   <p style={{ margin: 0, fontSize: "13px", lineHeight: 1.4 }}>
