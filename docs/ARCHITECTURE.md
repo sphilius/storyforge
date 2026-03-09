@@ -15,8 +15,12 @@
 - websocket/session handling
 - orchestration for live voice, story graph updates, image jobs, and exports
 - no beat edit persistence endpoints in Slice 2c (frontend-only editing)
+- Gemini text generation for Director responses in `/director/respond` (Google Gen AI SDK)
+- `.env` configuration via `GEMINI_API_KEY` and `GEMINI_TEXT_MODEL`
+- model-call trace events for started/completed/failed with safe fallback on errors
 
 ## Model routing
+- Gemini text model: Director beat response generation (`/director/respond`)
 - Vertex Live API: live director voice loop
 - Gemini API image model: async storyboard generation
 - later: optional grounding worker

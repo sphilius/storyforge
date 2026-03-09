@@ -26,6 +26,7 @@ Deliver one coherent, legible, technically credible live demo loop for the Gemin
 - Live voice + interruption
 - React Flow scene graph
 - Selected beat inspection + editing in right panel (frontend-only for now)
+- Gemini-backed Director text response in backend (`/director/respond`)
 - Async storyboard generation
 - Trace View
 - Character Interview Mode (1 active character)
