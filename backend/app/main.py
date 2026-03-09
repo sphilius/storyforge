@@ -54,6 +54,15 @@ def get_genai_client() -> Any:
     return genai.Client(api_key=api_key)
 
 
+def is_live_director_enabled() -> bool:
+    raw_value = os.getenv("USE_LIVE_DIRECTOR")
+    if raw_value is None:
+        # Backward-compatible typo guard for older local env files.
+        raw_value = os.getenv("USE_LIVE_DIRECTO", "false")
+    raw_value = raw_value.strip().lower()
+    return raw_value in {"1", "true", "yes", "on"}
+
+
 def build_node(user_input: str, director_response: str) -> DirectorNode:
     cleaned_input = user_input.strip()
     seed_text = cleaned_input if cleaned_input else director_response.strip()
@@ -98,7 +107,33 @@ def build_ping_payload() -> DirectorResponse:
     )
 
 
-def generate_director_response(user_input: str) -> tuple[str, list[str]]:
+def build_director_prompt(cleaned_input: str) -> str:
+    return (
+        "You are StoryForge Director, a concise story beat assistant. "
+        "Given a creator input, return 1-2 short sentences that suggest the next beat. "
+        "Stay concrete and cinematic.\n\n"
+        f"Creator input: {cleaned_input}"
+    )
+
+
+def extract_live_text(live_event: Any) -> str:
+    event_text = getattr(live_event, "text", None)
+    if isinstance(event_text, str) and event_text.strip():
+        return event_text.strip()
+
+    server_content = getattr(live_event, "server_content", None)
+    model_turn = getattr(server_content, "model_turn", None)
+    parts = getattr(model_turn, "parts", None) or []
+
+    collected_parts: list[str] = []
+    for part in parts:
+        part_text = getattr(part, "text", None)
+        if isinstance(part_text, str) and part_text.strip():
+            collected_parts.append(part_text.strip())
+    return " ".join(collected_parts).strip()
+
+
+def generate_standard_director_response(user_input: str) -> tuple[str, list[str]]:
     cleaned_input = user_input.strip()
     if not cleaned_input:
         cleaned_input = "story idea"
@@ -111,12 +146,7 @@ def generate_director_response(user_input: str) -> tuple[str, list[str]]:
         if not model_name:
             raise RuntimeError("GEMINI_TEXT_MODEL is not configured.")
 
-        prompt = (
-            "You are StoryForge Director, a concise story beat assistant. "
-            "Given a creator input, return 1-2 short sentences that suggest the next beat. "
-            "Stay concrete and cinematic.\n\n"
-            f"Creator input: {cleaned_input}"
-        )
+        prompt = build_director_prompt(cleaned_input)
 
         result = get_genai_client().models.generate_content(
             model=model_name,
@@ -138,6 +168,73 @@ def generate_director_response(user_input: str) -> tuple[str, list[str]]:
         )
         trace.extend(["model_call_failed", "response_generated", "graph_update_ready"])
         return fallback_response, trace
+
+
+def generate_live_director_response(user_input: str) -> tuple[str, list[str]]:
+    cleaned_input = user_input.strip()
+    if not cleaned_input:
+        cleaned_input = "story idea"
+
+    trace = ["input_received", "live_session_started"]
+    logger.info("live_session_started")
+
+    try:
+        live_model = os.getenv("GEMINI_LIVE_MODEL", "").strip()
+        if not live_model:
+            raise RuntimeError("GEMINI_LIVE_MODEL is not configured.")
+
+        prompt = build_director_prompt(cleaned_input)
+        client = get_genai_client()
+
+        if not hasattr(client, "live"):
+            raise RuntimeError("Google Gen AI client does not support live sessions.")
+
+        response_text_parts: list[str] = []
+        with client.live.connect(
+            model=live_model,
+            config={"response_modalities": ["TEXT"]},
+        ) as session:
+            session.send_client_content(
+                turns=[{"role": "user", "parts": [{"text": prompt}]}],
+                turn_complete=True,
+            )
+            trace.append("live_input_sent")
+            logger.info("live_input_sent")
+
+            for live_event in session.receive():
+                event_text = extract_live_text(live_event)
+                if event_text:
+                    response_text_parts.append(event_text)
+
+        response_text = " ".join(response_text_parts).strip()
+        if not response_text:
+            raise RuntimeError("Live session returned an empty response.")
+
+        trace.extend(
+            [
+                "live_output_received",
+                "live_session_closed",
+                "response_generated",
+                "graph_update_ready",
+            ]
+        )
+        logger.info("live_output_received")
+        logger.info("live_session_closed")
+        return response_text, trace
+    except Exception:
+        logger.exception("live_session_failed")
+        trace.extend(["live_session_failed", "live_fallback_to_standard"])
+        standard_response, standard_trace = generate_standard_director_response(cleaned_input)
+        trace.extend(
+            event for event in standard_trace if event not in {"input_received"}
+        )
+        return standard_response, trace
+
+
+def generate_director_response(user_input: str) -> tuple[str, list[str]]:
+    if is_live_director_enabled():
+        return generate_live_director_response(user_input)
+    return generate_standard_director_response(user_input)
 
 
 app = FastAPI(title="StoryForge Backend")
