@@ -4,14 +4,17 @@
 - React
 - React Flow
 - right-side Character Lab panel
+- right-side Selected Beat editor (id, title, summary, notes, save/cancel)
 - bottom timeline drawer
 - left rail scratchpad
 - Trace View overlay
+- local beat draft state and trace events (`node_selected`, `beat_edit_started`, `beat_updated`)
 
 ## Backend
 - FastAPI
 - websocket/session handling
 - orchestration for live voice, story graph updates, image jobs, and exports
+- no beat edit persistence endpoints in Slice 2c (frontend-only editing)
 
 ## Model routing
 - Vertex Live API: live director voice loop

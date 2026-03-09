@@ -18,9 +18,19 @@ type DirectorResponse = {
 
 type StoryNodeData = {
   label: string;
+  title?: string;
+  summary?: string;
+  notes?: string;
 };
 
 type VoiceStatus = "idle" | "listening" | "processing" | "unsupported" | "error";
+
+type BeatDraft = {
+  id: string;
+  title: string;
+  summary: string;
+  notes: string;
+};
 
 type SpeechRecognitionResultLike = {
   transcript: string;
@@ -53,10 +63,30 @@ type WindowWithSpeechRecognition = Window & {
   webkitSpeechRecognition?: SpeechRecognitionConstructorLike;
 };
 
+const composeBeatLabel = (title: string, summary: string): string => {
+  const normalizedTitle = title.trim() || "Untitled Beat";
+  const normalizedSummary = summary.trim();
+  return normalizedSummary
+    ? `${normalizedTitle}: ${normalizedSummary}`
+    : normalizedTitle;
+};
+
+const toBeatDraft = (node: Node<StoryNodeData>): BeatDraft => ({
+  id: node.id,
+  title: node.data.title ?? node.data.label,
+  summary: node.data.summary ?? "",
+  notes: node.data.notes ?? "",
+});
+
 const toNode = (data: DirectorResponse): Node<StoryNodeData> => ({
   id: data.node.id,
   position: { x: data.node.x, y: data.node.y },
-  data: { label: data.node.label },
+  data: {
+    label: data.node.label,
+    title: data.node.label,
+    summary: "",
+    notes: "",
+  },
   type: "default",
 });
 
@@ -70,9 +100,12 @@ export default function App() {
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("idle");
   const [voiceError, setVoiceError] = useState("");
   const [lastTranscript, setLastTranscript] = useState("");
+  const [beatDraft, setBeatDraft] = useState<BeatDraft | null>(null);
   const flowRef = useRef<ReactFlowInstance | null>(null);
   const hasInitialFitRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const selectedNodeIdRef = useRef<string | null>(null);
+  const beatEditStartedRef = useRef(false);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setNodes((current) => applyNodeChanges(changes, current));
@@ -82,9 +115,23 @@ export default function App() {
     () => nodes.find((node) => node.selected),
     [nodes],
   );
+  const selectedBeat = useMemo(
+    () => (selectedNode ? toBeatDraft(selectedNode) : null),
+    [selectedNode],
+  );
+  const isBeatDirty =
+    !!beatDraft &&
+    !!selectedBeat &&
+    (beatDraft.title !== selectedBeat.title ||
+      beatDraft.summary !== selectedBeat.summary ||
+      beatDraft.notes !== selectedBeat.notes);
 
   const handleFlowInit = useCallback((instance: ReactFlowInstance) => {
     flowRef.current = instance;
+  }, []);
+
+  const appendTraceEvent = useCallback((event: string) => {
+    setTrace((current) => [...current, event]);
   }, []);
 
   const sendDirectorInput = useCallback(async (input: string) => {
@@ -145,6 +192,90 @@ export default function App() {
     flowRef.current.fitView({ padding: 0.2, duration: 250 });
     hasInitialFitRef.current = true;
   }, [nodes.length]);
+
+  useEffect(() => {
+    const currentId = selectedNode?.id ?? null;
+    if (currentId === selectedNodeIdRef.current) {
+      return;
+    }
+
+    selectedNodeIdRef.current = currentId;
+    beatEditStartedRef.current = false;
+
+    if (!selectedNode) {
+      setBeatDraft(null);
+      return;
+    }
+
+    setBeatDraft(toBeatDraft(selectedNode));
+    appendTraceEvent("node_selected");
+  }, [appendTraceEvent, selectedNode]);
+
+  const handleBeatFieldChange = useCallback(
+    (field: keyof Omit<BeatDraft, "id">, value: string) => {
+      if (!beatEditStartedRef.current) {
+        beatEditStartedRef.current = true;
+        appendTraceEvent("beat_edit_started");
+      }
+
+      setBeatDraft((current) => {
+        if (!current) {
+          return current;
+        }
+        return { ...current, [field]: value };
+      });
+    },
+    [appendTraceEvent],
+  );
+
+  const handleBeatSave = useCallback(() => {
+    if (!beatDraft) {
+      return;
+    }
+
+    const title = beatDraft.title.trim() || "Untitled Beat";
+    const summary = beatDraft.summary.trim();
+    const notes = beatDraft.notes.trim();
+    const nextLabel = composeBeatLabel(title, summary);
+
+    setNodes((current) =>
+      current.map((node) =>
+        node.id === beatDraft.id
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                label: nextLabel,
+                title,
+                summary,
+                notes,
+              },
+            }
+          : node,
+      ),
+    );
+    setBeatDraft((current) =>
+      current
+        ? {
+            ...current,
+            title,
+            summary,
+            notes,
+          }
+        : current,
+    );
+    beatEditStartedRef.current = false;
+    appendTraceEvent("beat_updated");
+  }, [appendTraceEvent, beatDraft]);
+
+  const handleBeatCancel = useCallback(() => {
+    if (!selectedNode) {
+      return;
+    }
+
+    beatEditStartedRef.current = false;
+    setBeatDraft(toBeatDraft(selectedNode));
+  }, [selectedNode]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -349,21 +480,156 @@ export default function App() {
         </section>
 
         <section style={{ marginBottom: "24px" }}>
-          <h3 style={{ marginTop: 0, marginBottom: "12px" }}>Selected Node</h3>
-          {selectedNode ? (
-            <div
+          <h3 style={{ marginTop: 0, marginBottom: "12px" }}>Selected Beat</h3>
+          {selectedNode && beatDraft ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleBeatSave();
+              }}
               style={{
                 border: "1px solid #2b2f3a",
                 borderRadius: "8px",
                 padding: "10px",
                 background: "#111318",
+                display: "grid",
+                gap: "10px",
               }}
             >
-              <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#9aa0ad" }}>
-                ID: {selectedNode.id}
-              </p>
-              <p style={{ margin: 0, lineHeight: 1.4 }}>{selectedNode.data.label}</p>
-            </div>
+              <label
+                style={{
+                  display: "grid",
+                  gap: "4px",
+                  fontSize: "12px",
+                  color: "#9aa0ad",
+                }}
+              >
+                Beat ID
+                <input
+                  readOnly
+                  value={beatDraft.id}
+                  style={{
+                    height: "28px",
+                    borderRadius: "6px",
+                    border: "1px solid #2b2f3a",
+                    background: "#0f1115",
+                    color: "#9aa0ad",
+                    padding: "0 8px",
+                  }}
+                />
+              </label>
+
+              <label
+                style={{
+                  display: "grid",
+                  gap: "4px",
+                  fontSize: "12px",
+                  color: "#9aa0ad",
+                }}
+              >
+                Title
+                <input
+                  value={beatDraft.title}
+                  onChange={(event) =>
+                    handleBeatFieldChange("title", event.target.value)
+                  }
+                  style={{
+                    height: "28px",
+                    borderRadius: "6px",
+                    border: "1px solid #2b2f3a",
+                    background: "#0f1115",
+                    color: "#f5f7fa",
+                    padding: "0 8px",
+                  }}
+                />
+              </label>
+
+              <label
+                style={{
+                  display: "grid",
+                  gap: "4px",
+                  fontSize: "12px",
+                  color: "#9aa0ad",
+                }}
+              >
+                Summary
+                <textarea
+                  value={beatDraft.summary}
+                  onChange={(event) =>
+                    handleBeatFieldChange("summary", event.target.value)
+                  }
+                  rows={2}
+                  style={{
+                    borderRadius: "6px",
+                    border: "1px solid #2b2f3a",
+                    background: "#0f1115",
+                    color: "#f5f7fa",
+                    padding: "6px 8px",
+                    resize: "vertical",
+                  }}
+                />
+              </label>
+
+              <label
+                style={{
+                  display: "grid",
+                  gap: "4px",
+                  fontSize: "12px",
+                  color: "#9aa0ad",
+                }}
+              >
+                Notes (Optional)
+                <textarea
+                  value={beatDraft.notes}
+                  onChange={(event) =>
+                    handleBeatFieldChange("notes", event.target.value)
+                  }
+                  rows={3}
+                  style={{
+                    borderRadius: "6px",
+                    border: "1px solid #2b2f3a",
+                    background: "#0f1115",
+                    color: "#f5f7fa",
+                    padding: "6px 8px",
+                    resize: "vertical",
+                  }}
+                />
+              </label>
+
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="submit"
+                  disabled={!isBeatDirty}
+                  style={{
+                    height: "30px",
+                    borderRadius: "6px",
+                    border: "1px solid #3c4252",
+                    background: isBeatDirty ? "#222837" : "#1a1e27",
+                    color: "#f5f7fa",
+                    padding: "0 10px",
+                    cursor: isBeatDirty ? "pointer" : "not-allowed",
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBeatCancel}
+                  disabled={!isBeatDirty}
+                  style={{
+                    height: "30px",
+                    borderRadius: "6px",
+                    border: "1px solid #3c4252",
+                    background: isBeatDirty ? "#1e2431" : "#1a1e27",
+                    color: "#f5f7fa",
+                    padding: "0 10px",
+                    cursor: isBeatDirty ? "pointer" : "not-allowed",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           ) : (
             <p style={{ margin: 0, color: "#9aa0ad", fontSize: "14px" }}>
               No node selected.
