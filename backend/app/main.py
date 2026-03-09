@@ -79,14 +79,32 @@ class StoryboardRequestPayload(BaseModel):
 class StoryboardRequestResponse(BaseModel):
     job_id: str
     beat_id: str
-    status: Literal["requested", "generating"]
+    status: Literal["not_requested", "requested", "generating", "completed", "failed"]
     trace: list[str]
     message: str
+
+
+class StoryboardStatusResponse(BaseModel):
+    beat_id: str
+    status: Literal["not_requested", "requested", "generating", "completed", "failed"]
+    job_id: str | None = None
+    trace: list[str]
+    message: str
+
+
+class StoryboardJobRecord(BaseModel):
+    job_id: str
+    beat_id: str
+    status: Literal["requested", "generating", "completed", "failed"]
+    should_fail: bool
+    start_after_ts: float
+    complete_after_ts: float
 
 
 SENTINEL_RECENT_INPUTS: deque[str] = deque(maxlen=10)
 SENTINEL_RECENT_GENERIC_FLAGS: deque[bool] = deque(maxlen=8)
 SENTINEL_RECENT_LORE_TERMS: deque[set[str]] = deque(maxlen=8)
+STORYBOARD_JOBS_BY_BEAT: dict[str, StoryboardJobRecord] = {}
 
 
 @lru_cache(maxsize=1)
@@ -483,6 +501,24 @@ def generate_director_response(user_input: str) -> tuple[str, list[str]]:
     return generate_standard_director_response(user_input)
 
 
+def resolve_storyboard_status(job: StoryboardJobRecord, now_ts: float) -> tuple[str, list[str]]:
+    trace: list[str] = []
+
+    if job.status == "requested" and now_ts >= job.start_after_ts:
+        job.status = "generating"
+        trace.append("storyboard_generation_started")
+
+    if job.status == "generating" and now_ts >= job.complete_after_ts:
+        if job.should_fail:
+            job.status = "failed"
+            trace.append("storyboard_generation_failed")
+        else:
+            job.status = "completed"
+            trace.append("storyboard_generation_completed")
+
+    return job.status, trace
+
+
 app = FastAPI(title="StoryForge Backend")
 
 app.add_middleware(
@@ -549,13 +585,24 @@ def storyboard_request(payload: StoryboardRequestPayload) -> StoryboardRequestRe
         )
         checksum = sum(ord(char) for char in context_seed)
         job_id = f"storyboard-{checksum % 100000}-{int(time.time())}"
+        now_ts = time.time()
+        should_fail = checksum % 9 == 0
 
-        logger.info("storyboard_generation_started beat_id=%s", beat_id)
+        STORYBOARD_JOBS_BY_BEAT[beat_id] = StoryboardJobRecord(
+            job_id=job_id,
+            beat_id=beat_id,
+            status="requested",
+            should_fail=should_fail,
+            start_after_ts=now_ts + 0.5,
+            complete_after_ts=now_ts + 2.0,
+        )
+
+        logger.info("storyboard_requested beat_id=%s job_id=%s", beat_id, job_id)
         return StoryboardRequestResponse(
             job_id=job_id,
             beat_id=beat_id,
             status="requested",
-            trace=["storyboard_generation_started"],
+            trace=["storyboard_requested"],
             message="Storyboard request accepted (mock).",
         )
     except ValueError as err:
@@ -570,3 +617,43 @@ def storyboard_request(payload: StoryboardRequestPayload) -> StoryboardRequestRe
             status_code=500,
             detail={"message": "Storyboard request failed.", "trace": ["storyboard_request_failed"]},
         ) from err
+
+
+@app.get("/storyboard/status/{beat_id}", response_model=StoryboardStatusResponse)
+def storyboard_status(beat_id: str) -> StoryboardStatusResponse:
+    normalized_beat_id = beat_id.strip()
+    if not normalized_beat_id:
+        raise HTTPException(status_code=400, detail="beat_id is required.")
+
+    job = STORYBOARD_JOBS_BY_BEAT.get(normalized_beat_id)
+    if not job:
+        return StoryboardStatusResponse(
+            beat_id=normalized_beat_id,
+            status="not_requested",
+            trace=[],
+            message="No storyboard request found for this beat.",
+        )
+
+    status, transition_trace = resolve_storyboard_status(job, time.time())
+    if transition_trace:
+        logger.info(
+            "storyboard_status_transition beat_id=%s job_id=%s trace=%s",
+            normalized_beat_id,
+            job.job_id,
+            ",".join(transition_trace),
+        )
+
+    status_message = {
+        "requested": "Storyboard request queued.",
+        "generating": "Storyboard generation in progress.",
+        "completed": "Storyboard generation completed.",
+        "failed": "Storyboard generation failed.",
+    }[status]
+
+    return StoryboardStatusResponse(
+        beat_id=normalized_beat_id,
+        status=status,
+        job_id=job.job_id,
+        trace=transition_trace,
+        message=status_message,
+    )

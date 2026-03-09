@@ -26,7 +26,12 @@ type LoreAnchorType = keyof LorePool;
 
 type LoreDraft = Record<LoreAnchorType, string>;
 
-type StoryboardStatus = "not_requested" | "generating" | "requested";
+type StoryboardStatus =
+  | "not_requested"
+  | "requested"
+  | "generating"
+  | "completed"
+  | "failed";
 
 type StoryboardRequestPayload = {
   beat_id: string;
@@ -40,7 +45,15 @@ type StoryboardRequestPayload = {
 type StoryboardRequestResponse = {
   job_id: string;
   beat_id: string;
-  status: "requested" | "generating";
+  status: StoryboardStatus;
+  trace: string[];
+  message: string;
+};
+
+type StoryboardStatusResponse = {
+  beat_id: string;
+  status: StoryboardStatus;
+  job_id?: string;
   trace: string[];
   message: string;
 };
@@ -140,8 +153,10 @@ const LORE_ANCHOR_LABELS: Record<LoreAnchorType, string> = {
 
 const STORYBOARD_STATUS_LABELS: Record<StoryboardStatus, string> = {
   not_requested: "Not requested",
-  generating: "Generating",
   requested: "Requested",
+  generating: "Generating",
+  completed: "Completed",
+  failed: "Failed",
 };
 
 const createEmptyLorePool = (): LorePool => ({
@@ -433,6 +448,7 @@ export default function App() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const selectedNodeIdRef = useRef<string | null>(null);
   const beatEditStartedRef = useRef(false);
+  const storyboardPollingBeatsRef = useRef<Set<string>>(new Set());
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setNodes((current) => applyNodeChanges(changes, current));
@@ -470,6 +486,70 @@ export default function App() {
   const appendTraceEvent = useCallback((event: string) => {
     setTrace((current) => [...current, event]);
   }, []);
+
+  const updateNodeStoryboardStatus = useCallback(
+    (beatId: string, status: StoryboardStatus) => {
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === beatId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  storyboardStatus: status,
+                },
+              }
+            : node,
+        ),
+      );
+    },
+    [],
+  );
+
+  const pollStoryboardStatus = useCallback(
+    (beatId: string) => {
+      if (storyboardPollingBeatsRef.current.has(beatId)) {
+        return;
+      }
+      storyboardPollingBeatsRef.current.add(beatId);
+
+      const pollOnce = async (): Promise<void> => {
+        try {
+          const response = await fetch(
+            `http://localhost:8000/storyboard/status/${encodeURIComponent(beatId)}`,
+          );
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const data: StoryboardStatusResponse = await response.json();
+          if (data.trace.length > 0) {
+            setTrace((current) => [...current, ...data.trace]);
+          }
+          updateNodeStoryboardStatus(beatId, data.status);
+
+          if (data.status === "requested" || data.status === "generating") {
+            window.setTimeout(() => {
+              void pollOnce();
+            }, 900);
+            return;
+          }
+
+          storyboardPollingBeatsRef.current.delete(beatId);
+        } catch (err) {
+          storyboardPollingBeatsRef.current.delete(beatId);
+          appendTraceEvent("storyboard_generation_failed");
+          updateNodeStoryboardStatus(beatId, "failed");
+          const message =
+            err instanceof Error ? err.message : "Storyboard status polling failed.";
+          setError(message);
+        }
+      };
+
+      void pollOnce();
+    },
+    [appendTraceEvent, updateNodeStoryboardStatus],
+  );
 
   const sendDirectorInput = useCallback(async (input: string) => {
     const trimmed = input.trim();
@@ -690,19 +770,7 @@ export default function App() {
     const beatLabel = composeBeatLabel(title, summary);
 
     appendTraceEvent("storyboard_requested");
-    setNodes((current) =>
-      current.map((node) =>
-        node.id === selectedNode.id
-          ? {
-              ...node,
-              data: {
-                ...node.data,
-                storyboardStatus: "generating",
-              },
-            }
-          : node,
-      ),
-    );
+    updateNodeStoryboardStatus(selectedNode.id, "requested");
 
     try {
       const payload: StoryboardRequestPayload = {
@@ -745,39 +813,24 @@ export default function App() {
 
       const data: StoryboardRequestResponse = await response.json();
       setTrace((current) => [...current, ...data.trace]);
-      setNodes((current) =>
-        current.map((node) =>
-          node.id === selectedNode.id
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  storyboardStatus: data.status,
-                },
-              }
-            : node,
-        ),
-      );
+      updateNodeStoryboardStatus(selectedNode.id, data.status);
+      if (data.status === "requested" || data.status === "generating") {
+        pollStoryboardStatus(selectedNode.id);
+      }
       setError("");
     } catch (err) {
-      setNodes((current) =>
-        current.map((node) =>
-          node.id === selectedNode.id
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  storyboardStatus: "not_requested",
-                },
-              }
-            : node,
-        ),
-      );
+      updateNodeStoryboardStatus(selectedNode.id, "failed");
       appendTraceEvent("storyboard_request_failed");
       const message = err instanceof Error ? err.message : "Storyboard request failed.";
       setError(message);
     }
-  }, [appendTraceEvent, beatDraft, selectedNode]);
+  }, [
+    appendTraceEvent,
+    beatDraft,
+    pollStoryboardStatus,
+    selectedNode,
+    updateNodeStoryboardStatus,
+  ]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -861,6 +914,7 @@ export default function App() {
   useEffect(() => {
     return () => {
       recognitionRef.current?.stop();
+      storyboardPollingBeatsRef.current.clear();
     };
   }, []);
 
@@ -1157,22 +1211,33 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleGenerateStoryboard}
-                  disabled={selectedStoryboardStatus === "generating"}
+                  disabled={
+                    selectedStoryboardStatus === "requested" ||
+                    selectedStoryboardStatus === "generating"
+                  }
                   style={{
                     height: "30px",
                     borderRadius: "6px",
                     border: "1px solid #3c4252",
                     background:
-                      selectedStoryboardStatus === "generating" ? "#1a1e27" : "#223244",
+                      selectedStoryboardStatus === "requested" ||
+                      selectedStoryboardStatus === "generating"
+                        ? "#1a1e27"
+                        : "#223244",
                     color: "#f5f7fa",
                     padding: "0 10px",
                     cursor:
-                      selectedStoryboardStatus === "generating" ? "not-allowed" : "pointer",
+                      selectedStoryboardStatus === "requested" ||
+                      selectedStoryboardStatus === "generating"
+                        ? "not-allowed"
+                        : "pointer",
                   }}
                 >
-                  {selectedStoryboardStatus === "generating"
-                    ? "Generating..."
-                    : "Generate Storyboard"}
+                  {selectedStoryboardStatus === "requested"
+                    ? "Requested..."
+                    : selectedStoryboardStatus === "generating"
+                      ? "Generating..."
+                      : "Generate Storyboard"}
                 </button>
               </section>
 

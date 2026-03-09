@@ -7,7 +7,7 @@
 - right-side Selected Beat editor (id, title, summary, notes, save/cancel)
 - right-side Lore section in Selected Beat editor (character, setting, event, theme, backstory, prop)
 - right-side Story Sentinel warning section for selected beat or most recent action, including soft three-clue suggestions
-- selected-beat storyboard request action + per-beat storyboard status (`not requested` / `generating` / `requested`)
+- selected-beat storyboard request action + per-beat storyboard status (`not requested` / `requested` / `generating` / `completed` / `failed`)
 - bottom timeline drawer
 - left rail scratchpad
 - Trace View overlay
@@ -26,7 +26,8 @@
 - Story Sentinel heuristic checks on `/director/respond` with warning payload + trace events (`story_sentinel_checked`, `story_sentinel_warning_added`, `story_sentinel_clear`)
 - lightweight lore metadata in beat/node payload (`lore_pool`) with zero-or-more anchors per type
 - soft three-clue rule pass using lore richness + recent overlap heuristics with trace events (`three_clue_check_started`, `three_clue_rule_suggestion_added`, `three_clue_rule_clear`)
-- storyboard request initiation endpoint (`/storyboard/request`) with mock job response + trace events (`storyboard_generation_started`, `storyboard_request_failed`)
+- storyboard request initiation endpoint (`/storyboard/request`) with mock job response + trace events (`storyboard_requested`, `storyboard_request_failed`)
+- storyboard lifecycle status endpoint (`/storyboard/status/{beat_id}`) with simulated async transitions and trace events (`storyboard_requested`, `storyboard_generation_started`, `storyboard_generation_completed`, `storyboard_generation_failed`)
 
 ## Model routing
 - Gemini text model: Director beat response generation (`/director/respond`)
