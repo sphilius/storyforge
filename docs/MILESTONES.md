@@ -12,29 +12,30 @@
 9. Slice 7a: beat -> storyboard request initiation (selected beat + mock backend job)
 10. Slice 7b: async storyboard lifecycle per beat (requested -> generating -> completed/failed)
 11. Slice 7c: attach storyboard image results to beats (beat-specific result payload + selected-beat preview)
-12. Async storyboard generation
-13. Trace View / Director Overlay
-14. Character Interview Mode
-15. Import flow
-16. Flexible lore pool + soft three-clue rule
+12. Slice 7d: real storyboard image generation path with fallback-to-mock attachment
+13. Async storyboard generation
+14. Trace View / Director Overlay
+15. Character Interview Mode
+16. Import flow
+17. Flexible lore pool + soft three-clue rule
 
 ## Tier 2
-17. Timeline scrubber / replay
-18. Mode switching
-19. Export pack
-20. Pacing Map
-21. Color Script Mode
-22. Trait suggestion bubbles
+18. Timeline scrubber / replay
+19. Mode switching
+20. Export pack
+21. Pacing Map
+22. Color Script Mode
+23. Trait suggestion bubbles
 
 ## Tier 3
-23. Animatic button
-24. Mood bed
-25. Grounding
-26. Expression update per turn from cached expressions
+24. Animatic button
+25. Mood bed
+26. Grounding
+27. Expression update per turn from cached expressions
 
 ## Post-contest
-27. 2.5D lore tableau
-28. Multi-character simultaneous voice
-29. Persona authoring UI
-30. Explainability studio
-31. Advanced worker orchestration
+28. 2.5D lore tableau
+29. Multi-character simultaneous voice
+30. Persona authoring UI
+31. Explainability studio
+32. Advanced worker orchestration

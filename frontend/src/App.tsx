@@ -48,6 +48,16 @@ type StoryboardResult = {
   images: StoryboardImageResult[];
 };
 
+type StoryboardDebugInfo = {
+  image_model_name: string;
+  real_images_enabled: boolean;
+  response_received: boolean;
+  parsing_failed: boolean;
+  used_mock_fallback: boolean;
+  error_type?: string | null;
+  error_message?: string | null;
+};
+
 type StoryboardRequestPayload = {
   beat_id: string;
   beat_label: string;
@@ -62,6 +72,7 @@ type StoryboardRequestResponse = {
   beat_id: string;
   status: StoryboardStatus;
   result?: StoryboardResult | null;
+  debug?: StoryboardDebugInfo | null;
   trace: string[];
   message: string;
 };
@@ -71,6 +82,7 @@ type StoryboardStatusResponse = {
   status: StoryboardStatus;
   job_id?: string;
   result?: StoryboardResult | null;
+  debug?: StoryboardDebugInfo | null;
   trace: string[];
   message: string;
 };
@@ -98,6 +110,7 @@ type StoryNodeData = {
   lorePool: LorePool;
   storyboardStatus: StoryboardStatus;
   storyboardResult: StoryboardResult | null;
+  storyboardDebug: StoryboardDebugInfo | null;
 };
 
 type VoiceStatus = "idle" | "listening" | "processing" | "unsupported" | "error";
@@ -443,6 +456,7 @@ const toNode = (data: DirectorResponse): Node<StoryNodeData> => {
       lorePool,
       storyboardStatus: "not_requested",
       storyboardResult: null,
+      storyboardDebug: null,
     },
     type: "default",
   };
@@ -499,6 +513,13 @@ export default function App() {
   const selectedStoryboardStatus: StoryboardStatus =
     selectedNode?.data.storyboardStatus ?? "not_requested";
   const selectedStoryboardImage = selectedNode?.data.storyboardResult?.images[0] ?? null;
+  const selectedStoryboardDebug = selectedNode?.data.storyboardDebug ?? null;
+  const showStoryboardDebug =
+    import.meta.env.DEV &&
+    !!selectedStoryboardDebug &&
+    (selectedStoryboardDebug.used_mock_fallback ||
+      !!selectedStoryboardDebug.error_message ||
+      selectedStoryboardDebug.parsing_failed);
 
   const handleFlowInit = useCallback((instance: ReactFlowInstance) => {
     flowRef.current = instance;
@@ -513,6 +534,7 @@ export default function App() {
       beatId: string,
       status: StoryboardStatus,
       result?: StoryboardResult | null,
+      debug?: StoryboardDebugInfo | null,
     ) => {
       setNodes((current) =>
         current.map((node) =>
@@ -524,6 +546,8 @@ export default function App() {
                   storyboardStatus: status,
                   storyboardResult:
                     result === undefined ? node.data.storyboardResult : result,
+                  storyboardDebug:
+                    debug === undefined ? node.data.storyboardDebug : debug,
                 },
               }
             : node,
@@ -557,6 +581,7 @@ export default function App() {
             beatId,
             data.status,
             data.result ?? (data.status === "completed" ? null : undefined),
+            data.debug ?? null,
           );
           if (data.status === "completed" && !data.result) {
             appendTraceEvent("storyboard_result_missing");
@@ -825,7 +850,7 @@ export default function App() {
     const beatLabel = composeBeatLabel(title, summary);
 
     appendTraceEvent("storyboard_requested");
-    updateNodeStoryboardState(selectedNode.id, "requested", null);
+    updateNodeStoryboardState(selectedNode.id, "requested", null, null);
 
     try {
       const payload: StoryboardRequestPayload = {
@@ -868,7 +893,12 @@ export default function App() {
 
       const data: StoryboardRequestResponse = await response.json();
       setTrace((current) => [...current, ...data.trace]);
-      updateNodeStoryboardState(selectedNode.id, data.status, data.result ?? null);
+      updateNodeStoryboardState(
+        selectedNode.id,
+        data.status,
+        data.result ?? null,
+        data.debug ?? null,
+      );
       if (data.status === "completed" && !data.result) {
         appendTraceEvent("storyboard_result_missing");
       }
@@ -1328,6 +1358,35 @@ export default function App() {
                   <p style={{ margin: 0, fontSize: "12px", color: "#9aa0ad" }}>
                     Storyboard completed, but no image result is attached yet.
                   </p>
+                ) : null}
+                {showStoryboardDebug && selectedStoryboardDebug ? (
+                  <div
+                    style={{
+                      border: "1px solid #4b3b25",
+                      borderRadius: "8px",
+                      background: "#2b2418",
+                      padding: "8px",
+                      display: "grid",
+                      gap: "4px",
+                    }}
+                  >
+                    <p style={{ margin: 0, fontSize: "11px", color: "#e9d8a6" }}>
+                      Storyboard debug
+                    </p>
+                    <p style={{ margin: 0, fontSize: "11px", color: "#c6b794" }}>
+                      model={selectedStoryboardDebug.image_model_name} | real=
+                      {String(selectedStoryboardDebug.real_images_enabled)} | response=
+                      {String(selectedStoryboardDebug.response_received)} | parsing_failed=
+                      {String(selectedStoryboardDebug.parsing_failed)}
+                    </p>
+                    <p style={{ margin: 0, fontSize: "11px", color: "#c6b794" }}>
+                      reason=
+                      {selectedStoryboardDebug.error_type
+                        ? `${selectedStoryboardDebug.error_type}: `
+                        : ""}
+                      {selectedStoryboardDebug.error_message ?? "mock fallback used"}
+                    </p>
+                  </div>
                 ) : null}
               </section>
 

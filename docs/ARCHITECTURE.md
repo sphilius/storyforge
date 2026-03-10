@@ -30,6 +30,7 @@
 - storyboard request initiation endpoint (`/storyboard/request`) with mock job response + trace events (`storyboard_requested`, `storyboard_request_failed`)
 - storyboard lifecycle status endpoint (`/storyboard/status/{beat_id}`) with simulated async transitions and trace events (`storyboard_requested`, `storyboard_generation_started`, `storyboard_generation_completed`, `storyboard_generation_failed`)
 - storyboard status payload may include beat-bound result data (`result.images`) and result trace events (`storyboard_result_attached`, `storyboard_result_displayed`, `storyboard_result_missing`)
+- real storyboard image generation path in backend when `USE_REAL_STORYBOARD_IMAGES=true` using `GEMINI_IMAGE_MODEL`, with `storyboard_fallback_to_mock` on generation failure
 
 ## Model routing
 - Gemini text model: Director beat response generation (`/director/respond`)

@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import time
+import base64
 from collections import deque
 from difflib import SequenceMatcher
 from functools import lru_cache
@@ -102,11 +103,22 @@ class StoryboardResult(BaseModel):
     images: list[StoryboardImageResult]
 
 
+class StoryboardDebugInfo(BaseModel):
+    image_model_name: str
+    real_images_enabled: bool
+    response_received: bool = False
+    parsing_failed: bool = False
+    used_mock_fallback: bool = False
+    error_type: str | None = None
+    error_message: str | None = None
+
+
 class StoryboardStatusResponse(BaseModel):
     beat_id: str
     status: Literal["not_requested", "requested", "generating", "completed", "failed"]
     job_id: str | None = None
     result: StoryboardResult | None = None
+    debug: StoryboardDebugInfo | None = None
     trace: list[str]
     message: str
 
@@ -117,11 +129,17 @@ class StoryboardJobRecord(BaseModel):
     status: Literal["requested", "generating", "completed", "failed"]
     should_fail: bool
     beat_label: str
+    beat_title: str = ""
+    beat_summary: str = ""
+    beat_notes: str = ""
+    lore_pool: LorePool = Field(default_factory=LorePool)
     start_after_ts: float
     complete_after_ts: float
     result: StoryboardResult | None = None
+    debug: StoryboardDebugInfo | None = None
     result_attached_emitted: bool = False
     result_missing_emitted: bool = False
+    generation_attempted: bool = False
 
 
 SENTINEL_RECENT_INPUTS: deque[str] = deque(maxlen=10)
@@ -146,6 +164,12 @@ def is_live_director_enabled() -> bool:
     if raw_value is None:
         # Backward-compatible typo guard for older local env files.
         raw_value = os.getenv("USE_LIVE_DIRECTO", "false")
+    raw_value = raw_value.strip().lower()
+    return raw_value in {"1", "true", "yes", "on"}
+
+
+def is_real_storyboard_images_enabled() -> bool:
+    raw_value = os.getenv("USE_REAL_STORYBOARD_IMAGES", "false")
     raw_value = raw_value.strip().lower()
     return raw_value in {"1", "true", "yes", "on"}
 
@@ -569,6 +593,244 @@ def build_mock_storyboard_result(job: StoryboardJobRecord) -> StoryboardResult:
     )
 
 
+def sanitize_exception_message(raw_message: str) -> str:
+    message = raw_message.strip() or "unknown_error"
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if api_key:
+        message = message.replace(api_key, "[redacted]")
+    return message[:240]
+
+
+def build_storyboard_debug_info() -> StoryboardDebugInfo:
+    model_name = os.getenv("GEMINI_IMAGE_MODEL", "").strip()
+    return StoryboardDebugInfo(
+        image_model_name=model_name or "(unset)",
+        real_images_enabled=is_real_storyboard_images_enabled(),
+    )
+
+
+def build_storyboard_debug_trace(debug: StoryboardDebugInfo) -> list[str]:
+    trace = [
+        f"storyboard_debug:image_model_name={debug.image_model_name}",
+        f"storyboard_debug:real_images_enabled={str(debug.real_images_enabled).lower()}",
+        f"storyboard_debug:response_received={str(debug.response_received).lower()}",
+        f"storyboard_debug:parsing_failed={str(debug.parsing_failed).lower()}",
+    ]
+    if debug.error_type:
+        trace.append(f"storyboard_debug:error_type={debug.error_type}")
+    if debug.error_message:
+        trace.append(f"storyboard_debug:error_message={debug.error_message}")
+    return trace
+
+
+def build_storyboard_prompt(job: StoryboardJobRecord) -> str:
+    title = job.beat_title.strip() or job.beat_label.strip() or f"Beat {job.beat_id}"
+    summary = job.beat_summary.strip()
+    notes = job.beat_notes.strip()
+    lore_lines: list[str] = []
+    for anchor_type in LORE_ANCHOR_FIELDS:
+        values = [value.strip() for value in getattr(job.lore_pool, anchor_type) if value.strip()]
+        if values:
+            lore_lines.append(f"- {anchor_type}: {', '.join(values[:4])}")
+
+    lore_section = "\n".join(lore_lines) if lore_lines else "- none"
+
+    return (
+        "Create one cinematic storyboard frame for a story beat. "
+        "No text overlays, no watermark, no logo. "
+        "Clear composition, readable subject, dramatic lighting.\n\n"
+        f"Beat title: {title}\n"
+        f"Beat summary: {summary or 'n/a'}\n"
+        f"Beat notes: {notes or 'n/a'}\n"
+        f"Lore anchors:\n{lore_section}\n"
+    )
+
+
+def _try_decode_base64(value: str) -> bytes | None:
+    stripped_value = value.strip()
+    if not stripped_value:
+        return None
+    try:
+        return base64.b64decode(stripped_value, validate=True)
+    except Exception:
+        return None
+
+
+def _get_obj_value(obj: Any, key: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _extract_image_url(obj: Any) -> str | None:
+    for key in ("url", "uri", "file_uri", "image_uri"):
+        value = _get_obj_value(obj, key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _extract_image_data_and_mime(obj: Any) -> tuple[bytes, str] | None:
+    if obj is None:
+        return None
+
+    candidates = [obj]
+    nested = _get_obj_value(obj, "image")
+    if nested is not None:
+        candidates.append(nested)
+    nested_inline = _get_obj_value(obj, "inline_data")
+    if nested_inline is not None:
+        candidates.append(nested_inline)
+
+    for candidate in candidates:
+        mime_type = _get_obj_value(candidate, "mime_type")
+        if not isinstance(mime_type, str) or not mime_type.strip():
+            mime_type = "image/png"
+        else:
+            mime_type = mime_type.strip()
+
+        for data_key in ("data", "image_bytes", "bytes", "bytes_base64", "base64_data"):
+            value = _get_obj_value(candidate, data_key)
+            if isinstance(value, (bytes, bytearray)):
+                return bytes(value), mime_type
+            if isinstance(value, str):
+                decoded = _try_decode_base64(value)
+                if decoded is not None:
+                    return decoded, mime_type
+
+    return None
+
+
+def _build_data_url(image_bytes: bytes, mime_type: str) -> str:
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def extract_image_result_from_genai_response(response: Any) -> tuple[str, str]:
+    generated_images = _get_obj_value(response, "generated_images")
+    if isinstance(generated_images, list):
+        for generated_image in generated_images:
+            data_and_mime = _extract_image_data_and_mime(generated_image)
+            if data_and_mime is not None:
+                image_bytes, mime_type = data_and_mime
+                return _build_data_url(image_bytes, mime_type), mime_type
+            image_url = _extract_image_url(generated_image)
+            if image_url:
+                return image_url, "image/png"
+
+    candidates = _get_obj_value(response, "candidates")
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            content = _get_obj_value(candidate, "content")
+            parts = _get_obj_value(content, "parts")
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                data_and_mime = _extract_image_data_and_mime(part)
+                if data_and_mime is not None:
+                    image_bytes, mime_type = data_and_mime
+                    return _build_data_url(image_bytes, mime_type), mime_type
+                image_url = _extract_image_url(part)
+                if image_url:
+                    return image_url, "image/png"
+
+    data_and_mime = _extract_image_data_and_mime(response)
+    if data_and_mime is not None:
+        image_bytes, mime_type = data_and_mime
+        return _build_data_url(image_bytes, mime_type), mime_type
+
+    image_url = _extract_image_url(response)
+    if image_url:
+        return image_url, "image/png"
+
+    raise RuntimeError("Image response did not contain a usable image payload.")
+
+
+def generate_real_storyboard_result(
+    job: StoryboardJobRecord,
+    debug: StoryboardDebugInfo,
+) -> StoryboardResult:
+    model_name = os.getenv("GEMINI_IMAGE_MODEL", "").strip()
+    if not model_name:
+        raise RuntimeError("GEMINI_IMAGE_MODEL is not configured.")
+
+    prompt = build_storyboard_prompt(job)
+    client = get_genai_client()
+    models = getattr(client, "models", None)
+    if models is None:
+        raise RuntimeError("Google Gen AI client does not expose models API.")
+
+    response = models.generate_content(
+        model=model_name,
+        contents=prompt,
+        config={"response_modalities": ["IMAGE"]},
+    )
+    debug.response_received = response is not None
+
+    try:
+        image_url, mime_type = extract_image_result_from_genai_response(response)
+    except Exception:
+        debug.parsing_failed = True
+        raise
+
+    return StoryboardResult(
+        beat_id=job.beat_id,
+        provider="gemini_image",
+        images=[
+            StoryboardImageResult(
+                id=f"{job.job_id}-image-1",
+                url=image_url,
+                mime_type=mime_type,
+                width=768,
+                height=432,
+                source="generated",
+            )
+        ],
+    )
+
+
+def generate_storyboard_result(
+    job: StoryboardJobRecord,
+) -> tuple[StoryboardResult, list[str], StoryboardDebugInfo]:
+    trace: list[str] = []
+    debug = build_storyboard_debug_info()
+
+    if debug.real_images_enabled:
+        try:
+            logger.info(
+                "storyboard_real_generation_started beat_id=%s job_id=%s image_model_name=%s real_images_enabled=%s",
+                job.beat_id,
+                job.job_id,
+                debug.image_model_name,
+                debug.real_images_enabled,
+            )
+            return generate_real_storyboard_result(job, debug), trace, debug
+        except Exception as err:
+            debug.used_mock_fallback = True
+            debug.error_type = type(err).__name__
+            debug.error_message = sanitize_exception_message(str(err))
+            logger.error(
+                "storyboard_real_generation_failed beat_id=%s job_id=%s error_type=%s error_message=%s image_model_name=%s real_images_enabled=%s response_received=%s parsing_failed=%s",
+                job.beat_id,
+                job.job_id,
+                debug.error_type,
+                debug.error_message,
+                debug.image_model_name,
+                debug.real_images_enabled,
+                debug.response_received,
+                debug.parsing_failed,
+            )
+            logger.exception(
+                "storyboard_real_generation_failed_stack beat_id=%s job_id=%s",
+                job.beat_id,
+                job.job_id,
+            )
+            trace.extend(["storyboard_generation_failed", "storyboard_fallback_to_mock"])
+            trace.extend(build_storyboard_debug_trace(debug))
+
+    return build_mock_storyboard_result(job), trace, debug
+
+
 def resolve_storyboard_status(job: StoryboardJobRecord, now_ts: float) -> tuple[str, list[str]]:
     trace: list[str] = []
 
@@ -576,13 +838,30 @@ def resolve_storyboard_status(job: StoryboardJobRecord, now_ts: float) -> tuple[
         job.status = "generating"
         trace.append("storyboard_generation_started")
 
-    if job.status == "generating" and now_ts >= job.complete_after_ts:
+    if job.status == "generating" and now_ts >= job.complete_after_ts and not job.generation_attempted:
+        job.generation_attempted = True
         if job.should_fail:
             job.status = "failed"
             trace.append("storyboard_generation_failed")
         else:
-            job.status = "completed"
-            trace.append("storyboard_generation_completed")
+            try:
+                generated_result, generation_trace, debug_info = generate_storyboard_result(job)
+                trace.extend(generation_trace)
+                job.result = generated_result
+                job.debug = debug_info
+                job.status = "completed"
+                if "storyboard_fallback_to_mock" in generation_trace:
+                    trace.append("storyboard_generation_completed_mock")
+                else:
+                    trace.append("storyboard_generation_completed")
+            except Exception:
+                logger.exception(
+                    "storyboard_generation_failed beat_id=%s job_id=%s",
+                    job.beat_id,
+                    job.job_id,
+                )
+                job.status = "failed"
+                trace.append("storyboard_generation_failed")
 
     if job.status == "completed":
         if job.result is None:
@@ -673,7 +952,8 @@ def storyboard_request(payload: StoryboardRequestPayload) -> StoryboardRequestRe
         checksum = sum(ord(char) for char in context_seed)
         job_id = f"storyboard-{checksum % 100000}-{int(time.time())}"
         now_ts = time.time()
-        should_fail = checksum % 9 == 0
+        use_real_images = is_real_storyboard_images_enabled()
+        should_fail = (not use_real_images) and checksum % 9 == 0
 
         STORYBOARD_JOBS_BY_BEAT[beat_id] = StoryboardJobRecord(
             job_id=job_id,
@@ -681,6 +961,10 @@ def storyboard_request(payload: StoryboardRequestPayload) -> StoryboardRequestRe
             status="requested",
             should_fail=should_fail,
             beat_label=payload.beat_label.strip() or payload.beat_title.strip() or beat_id,
+            beat_title=payload.beat_title.strip(),
+            beat_summary=payload.beat_summary.strip(),
+            beat_notes=payload.beat_notes.strip(),
+            lore_pool=payload.lore_pool,
             start_after_ts=now_ts + 0.5,
             complete_after_ts=now_ts + 2.0,
         )
@@ -732,18 +1016,22 @@ def storyboard_status(beat_id: str) -> StoryboardStatusResponse:
             ",".join(transition_trace),
         )
 
-    status_message = {
-        "requested": "Storyboard request queued.",
-        "generating": "Storyboard generation in progress.",
-        "completed": "Storyboard generation completed.",
-        "failed": "Storyboard generation failed.",
-    }[status]
+    if status == "completed" and job.debug and job.debug.used_mock_fallback:
+        status_message = "Storyboard completed using mock fallback."
+    else:
+        status_message = {
+            "requested": "Storyboard request queued.",
+            "generating": "Storyboard generation in progress.",
+            "completed": "Storyboard generation completed.",
+            "failed": "Storyboard generation failed.",
+        }[status]
 
     return StoryboardStatusResponse(
         beat_id=normalized_beat_id,
         status=status,
         job_id=job.job_id,
         result=job.result,
+        debug=job.debug,
         trace=transition_trace,
         message=status_message,
     )
