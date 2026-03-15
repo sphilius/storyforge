@@ -3,6 +3,10 @@
   line-height: 1.5;
   font-weight: 400;
 
+  color-scheme: dark;
+  color: #E8E8E8;
+  background-color: #0D0D0D;
+
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -13,7 +17,8 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: #0f131a;
+  background: #0D0D0D;
+  color: #E8E8E8;
 }
 
 #root {
@@ -26,6 +31,28 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font-family: inherit;
+}
+
+/* Remove any default link styling */
+a {
+  color: #D4A017;
+  text-decoration: none;
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #111318;
+}
+::-webkit-scrollbar-thumb {
+  background: #2B2F3A;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3f4e;
 }
