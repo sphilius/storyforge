@@ -186,12 +186,14 @@ export const useLiveSession = () => {
   const processMessage = useCallback(
     (rawData: string) => {
       const message = JSON.parse(rawData) as Record<string, any>;
+      console.log("[LiveSession] Message received, keys:", Object.keys(message));
 
       const parts = message?.server_content?.model_turn?.parts;
       if (Array.isArray(parts)) {
         parts.forEach((part: Record<string, any>) => {
           const inlineData = part.inline_data;
           if (inlineData?.data) {
+            console.log("[LiveSession] Audio chunk from AI, size:", String(inlineData.data).length);
             emitAudio(String(inlineData.data));
           }
         });
@@ -229,9 +231,17 @@ export const useLiveSession = () => {
         console.log("[LiveSession] Setup sent. Waiting for server response...");
       };
 
-      socket.onmessage = (event) => {
-        if (typeof event.data === "string") {
-          processMessage(event.data);
+      socket.onmessage = async (event) => {
+        let rawData: string;
+        if (event.data instanceof Blob) {
+          rawData = await event.data.text();
+        } else {
+          rawData = String(event.data);
+        }
+        try {
+          processMessage(rawData);
+        } catch (err) {
+          console.error("[LiveSession] Failed to process message:", err);
         }
       };
 
@@ -259,6 +269,7 @@ export const useLiveSession = () => {
 
   const sendAudio = useCallback(
     (base64: string) => {
+      console.log("[LiveSession] Sending audio chunk, length:", base64.length);
       sendPayload({
         realtime_input: {
           media_chunks: [
@@ -275,6 +286,7 @@ export const useLiveSession = () => {
 
   const sendText = useCallback(
     (text: string) => {
+      console.log("[LiveSession] Sending text:", text);
       sendPayload({
         client_content: {
           turns: [
