@@ -4,15 +4,18 @@ import { useStoryState } from "./useStoryState";
 type SessionStatus = "idle" | "connecting" | "connected" | "error";
 type ToolCallCallback = (name: string, args: unknown, result: unknown) => void;
 
-const MODEL_NAME = "gemini-2.5-flash-native-audio-preview-12-2025";
+const MODEL_NAME = "models/gemini-2.5-flash-native-audio-preview-12-2025";
 const WS_ENDPOINT =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
-const setupMessage = {
+const buildSetupMessage = () => ({
   setup: {
     model: MODEL_NAME,
     generation_config: {
       response_modalities: ["AUDIO"],
+      temperature: 0.5,
+      top_p: 0.9,
+      top_k: 20,
       speech_config: {
         voice_config: {
           prebuilt_voice_config: { voice_name: "Kore" },
@@ -22,7 +25,7 @@ const setupMessage = {
     system_instruction: {
       parts: [
         {
-          text: `You are Director Mode — an elite AI cinematographer and creative partner. You help filmmakers direct stories through voice conversation. You are sharp, witty, cinematically literate, and creatively challenging — never servile. When the director gives a cue, narrate what happens in 2-4 evocative sentences. Use the update_scene tool when scenes change. Use introduce_character when new characters appear. Use generate_storyboard to create visual panels. Match the director's energy — if they're excited, be animated; if contemplative, be measured. Use conversational filler naturally ("Hmm, interesting choice...", "Let me frame that..."). Never break character.`,
+          text: "You are Director Mode — an elite AI cinematographer and creative partner. You help filmmakers direct stories through voice conversation. You are sharp, witty, cinematically literate, and creatively challenging — never servile. When the director gives a cue, narrate what happens in 2-4 evocative sentences. Use the update_scene tool when scenes change. Use introduce_character when new characters appear. Use generate_storyboard to create visual panels. Match the director's energy. Use conversational filler naturally. Never break character.",
         },
       ],
     },
@@ -32,36 +35,15 @@ const setupMessage = {
         function_declarations: [
           {
             name: "update_scene",
-            description:
-              "Update the current scene's metadata when the setting, mood, or action changes.",
+            description: "Update current scene metadata when setting, mood, or action changes.",
             parameters: {
               type: "OBJECT",
               properties: {
-                title: { type: "STRING", description: "Short scene title" },
-                description: {
-                  type: "STRING",
-                  description: "Vivid scene description",
-                },
-                mood: {
-                  type: "STRING",
-                  description: "Scene mood",
-                  enum: [
-                    "tense",
-                    "calm",
-                    "joyful",
-                    "mysterious",
-                    "dramatic",
-                    "melancholic",
-                    "suspenseful",
-                    "romantic",
-                  ],
-                },
-                directorNotes: {
-                  type: "STRING",
-                  description: "Internal notes for continuity",
-                },
+                title: { type: "STRING" },
+                description: { type: "STRING" },
+                mood: { type: "STRING", enum: ["tense","calm","joyful","mysterious","dramatic","melancholic","suspenseful","romantic"] },
+                directorNotes: { type: "STRING" },
               },
-              required: ["title", "description", "mood"],
             },
           },
           {
@@ -70,43 +52,28 @@ const setupMessage = {
             parameters: {
               type: "OBJECT",
               properties: {
-                name: { type: "STRING", description: "Character name" },
-                description: {
-                  type: "STRING",
-                  description: "Brief character description",
-                },
-                motivation: {
-                  type: "STRING",
-                  description: "Character motivation",
-                },
+                name: { type: "STRING" },
+                description: { type: "STRING" },
+                motivation: { type: "STRING" },
               },
-              required: ["name", "description"],
             },
           },
           {
             name: "generate_storyboard",
-            description:
-              "Generate a storyboard visual panel for the described scene.",
+            description: "Generate a storyboard visual panel for the described scene.",
             parameters: {
               type: "OBJECT",
               properties: {
-                scene_title: {
-                  type: "STRING",
-                  description: "Title of the scene to visualize",
-                },
-                prompt: {
-                  type: "STRING",
-                  description: "Detailed visual description for image generation",
-                },
+                scene_title: { type: "STRING" },
+                prompt: { type: "STRING" },
               },
-              required: ["scene_title", "prompt"],
             },
           },
         ],
       },
     ],
   },
-};
+});
 
 type FunctionCall = {
   id?: string;
@@ -255,8 +222,11 @@ export const useLiveSession = () => {
       socketRef.current = socket;
 
       socket.onopen = () => {
-        sendPayload(setupMessage);
+        const setup = buildSetupMessage();
+        console.log("[LiveSession] WebSocket opened. Sending setup for model:", setup.setup.model);
+        socket.send(JSON.stringify(setup));
         setStatus("connected");
+        console.log("[LiveSession] Setup sent. Waiting for server response...");
       };
 
       socket.onmessage = (event) => {
@@ -265,16 +235,18 @@ export const useLiveSession = () => {
         }
       };
 
-      socket.onerror = () => {
+      socket.onerror = (event) => {
+        console.error("[LiveSession] WebSocket error:", event);
         setStatus("error");
       };
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
+        console.log("[LiveSession] WebSocket closed. Code:", event.code, "Reason:", event.reason, "Clean:", event.wasClean);
         socketRef.current = null;
         setStatus((current) => (current === "error" ? "error" : "idle"));
       };
     },
-    [processMessage, sendPayload, status],
+    [processMessage, status],
   );
 
   const disconnect = useCallback(() => {
