@@ -1,12 +1,12 @@
 import type { StoryState } from "../hooks/useStoryState";
 
-const IMAGE_MODEL = "gemini-2.0-flash-exp";
+const IMAGE_MODEL = "gemini-2.5-flash-image";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 type StoryActions = Pick<StoryState, "updateScene" | "addTrace">;
 
 /**
- * Storyboard Agent — generates images via Gemini REST API (gemini-2.0-flash-exp)
+ * Storyboard Agent — generates images via Gemini REST API (gemini-2.5-flash-image)
  * and attaches them to scene nodes asynchronously.
  */
 export async function generateStoryboard(
