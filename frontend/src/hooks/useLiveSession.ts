@@ -186,25 +186,33 @@ export const useLiveSession = () => {
   const processMessage = useCallback(
     (rawData: string) => {
       const message = JSON.parse(rawData) as Record<string, any>;
+      console.log("[LiveSession] Message keys:", Object.keys(message));
 
-      const parts = message?.server_content?.model_turn?.parts;
+      const sc = message?.serverContent ?? message?.server_content;
+      const parts = sc?.modelTurn?.parts ?? sc?.model_turn?.parts;
       if (Array.isArray(parts)) {
         parts.forEach((part: Record<string, any>) => {
-          const inlineData = part.inline_data;
+          const inlineData = part.inlineData ?? part.inline_data;
           if (inlineData?.data) {
+            console.log("[LiveSession] Audio chunk, size:", String(inlineData.data).length);
             emitAudio(String(inlineData.data));
           }
         });
       }
 
-      const toolCallContainer = message?.tool_call ?? message?.toolCall;
+      const toolCallContainer = message?.toolCall ?? message?.tool_call;
       const functionCalls: FunctionCall[] =
-        toolCallContainer?.function_calls ?? toolCallContainer?.functionCalls ?? [];
+        toolCallContainer?.functionCalls ?? toolCallContainer?.function_calls ?? [];
       if (Array.isArray(functionCalls)) {
-        functionCalls.forEach((fn) => handleToolCall(fn));
+        functionCalls.forEach((fn) => {
+          console.log("[LiveSession] Tool call:", fn.name);
+          handleToolCall(fn);
+        },
       }
 
-      if (message?.server_content?.turn_complete) {
+      const turnComplete = sc?.turnComplete ?? sc?.turn_complete;
+      if (turnComplete) {
+        console.log("[LiveSession] Turn complete");
         emitTurnComplete();
       }
     },
