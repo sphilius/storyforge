@@ -1,4 +1,4 @@
-import type { Scene, TraceEvent } from "../hooks/useStoryState";
+import type { Scene } from "../hooks/useStoryState";
 
 export interface GeneratedImage {
   dataUrl: string;
@@ -134,13 +134,14 @@ export async function generateAndAttachStoryboard(
   sceneId: string,
   scene: Scene,
   updateScene: (id: string, updates: Partial<Scene>) => void,
-  addTrace: (event: TraceEvent) => void,
+  addTrace: (event: { id: string; type: string; message: string; timestamp: number; sceneId?: string }) => void,
 ): Promise<void> {
   addTrace({
+    id: `trace-${Date.now()}`,
     type: "storyboard_queued",
     message: `Queued storyboard image generation for ${scene.title}`,
     sceneId,
-    timestamp: new Date().toISOString(),
+    timestamp: Date.now(),
   });
   updateScene(sceneId, { imageLoading: true, imageError: false });
 
@@ -155,18 +156,20 @@ export async function generateAndAttachStoryboard(
     });
 
     addTrace({
+      id: `trace-${Date.now()}`,
       type: "storyboard_complete",
       message: `Storyboard generated for ${scene.title} via ${image.source}`,
       sceneId,
-      timestamp: new Date().toISOString(),
+      timestamp: Date.now(),
     });
   } catch {
     updateScene(sceneId, { imageLoading: false, imageError: true });
     addTrace({
+      id: `trace-${Date.now()}`,
       type: "error",
       message: `Storyboard generation failed for ${scene.title}`,
       sceneId,
-      timestamp: new Date().toISOString(),
+      timestamp: Date.now(),
     });
   }
 }

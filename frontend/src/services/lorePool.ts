@@ -9,7 +9,8 @@ export interface LorePool {
   prop: string[];
 }
 
-const recentLoreTerms: Set<string>[] = []; // last 8 sets of lore terms
+// Module-level state
+const recentLoreTerms: Set<string>[] = [];
 
 export function extractLorePool(userInput: string): LorePool {
   const pool: LorePool = {
@@ -18,17 +19,17 @@ export function extractLorePool(userInput: string): LorePool {
     event: [],
     theme: [],
     backstory: [],
-    prop: [],
+    prop: []
   };
 
   const regex = /(?:^|[,;])\s*(character|setting|event|theme|backstory|prop)\s*:\s*([^,;]+)/gi;
   let match;
 
   while ((match = regex.exec(userInput)) !== null) {
-    const key = match[1].toLowerCase() as keyof LorePool;
+    const type = match[1].toLowerCase() as keyof LorePool;
     const value = match[2].trim();
     if (value) {
-      pool[key].push(value);
+      pool[type].push(value);
     }
   }
 
@@ -37,26 +38,29 @@ export function extractLorePool(userInput: string): LorePool {
 
 export function runThreeClueRule(lorePool: LorePool): StorySentinelWarning[] {
   const warnings: StorySentinelWarning[] = [];
-  let populatedAnchorCount = 0;
+
+  // 1. Count populated anchor types
+  let populatedCount = 0;
   const currentTerms = new Set<string>();
 
-  for (const values of Object.values(lorePool)) {
-    if (values && values.length > 0) {
-      populatedAnchorCount++;
-      for (const value of values) {
-        currentTerms.add(value.toLowerCase());
+  for (const [, values] of Object.entries(lorePool)) {
+    if (values.length > 0) {
+      populatedCount++;
+      for (const val of values) {
+        currentTerms.add(val.toLowerCase());
       }
     }
   }
 
-  if (populatedAnchorCount <= 1) {
+  if (populatedCount <= 1) {
     warnings.push({
       code: 'three_clue_underconnected',
       message: 'This beat may be underconnected. Consider adding another connective clue.'
     });
   }
 
-  if (recentLoreTerms.length > 0) {
+  // 2. Check overlap with recent lore terms
+  if (recentLoreTerms.length > 0 && currentTerms.size > 0) {
     let hasOverlap = false;
     for (const recentSet of recentLoreTerms) {
       for (const term of currentTerms) {
@@ -79,7 +83,7 @@ export function runThreeClueRule(lorePool: LorePool): StorySentinelWarning[] {
   // Update recent lore terms
   recentLoreTerms.push(currentTerms);
   if (recentLoreTerms.length > 8) {
-    recentLoreTerms.shift();
+    recentLoreTerms.shift(); // Keep max 8
   }
 
   return warnings;
