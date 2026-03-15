@@ -42,10 +42,12 @@ export interface StoryState {
   characters: Character[];
   currentSceneIndex: number;
   traceEvents: TraceEvent[];
+  pendingNavigation: { action: string; target?: string } | null;
   addScene: (scene: Partial<Scene>) => void;
   updateScene: (id: string, updates: Partial<Scene>) => void;
   addCharacter: (character: Partial<Character>) => void;
   addTrace: (event: TraceEvent) => void;
+  setNavigation: (nav: { action: string; target?: string } | null) => void;
   getContextSummary: () => string;
 }
 
@@ -59,7 +61,7 @@ const generateId = (prefix: string): string => {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
-const getInitialState = (): Omit<StoryState, "addScene" | "updateScene" | "addCharacter" | "addTrace" | "getContextSummary"> => {
+const getInitialState = (): Omit<StoryState, "addScene" | "updateScene" | "addCharacter" | "addTrace" | "setNavigation" | "getContextSummary"> => {
   if (typeof window !== "undefined") {
     const serialized = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
     if (serialized) {
@@ -78,6 +80,7 @@ const getInitialState = (): Omit<StoryState, "addScene" | "updateScene" | "addCh
     characters: [],
     currentSceneIndex: -1,
     traceEvents: [],
+    pendingNavigation: null,
   };
 };
 
@@ -133,6 +136,9 @@ export const useStoryState = create<StoryState>()((set, get) => ({
     set((state) => ({
       traceEvents: [...state.traceEvents, event],
     }));
+  },
+  setNavigation: (nav) => {
+    set({ pendingNavigation: nav });
   },
   getContextSummary: () => {
     const { title, genre, scenes, characters } = get();

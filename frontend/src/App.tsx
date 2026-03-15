@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactFlow, { Background, Controls, MiniMap } from "reactflow";
+import ReactFlow, { Background, Controls, MiniMap, useReactFlow, ReactFlowProvider } from "reactflow";
 import type { Node } from "reactflow";
 import "reactflow/dist/style.css";
 import { ApiKeyModal } from "./components/ApiKeyModal";
@@ -18,11 +18,70 @@ const NODE_TYPES = {
   characterNode: CharacterNode,
 };
 
-export default function App() {
-  const { connect, disconnect, status, sendAudio, sendText, onAudio, onTurnComplete, onInterrupt } = useLiveSession();
+/** Watches zustand for navigation commands and executes them via React Flow API */
+function CanvasNavigator() {
+  const { fitView, zoomIn, zoomOut, setCenter, getNodes } = useReactFlow();
+  const pendingNavigation = useStoryState((s) => s.pendingNavigation);
+  const setNavigation = useStoryState((s) => s.setNavigation);
+
+  useEffect(() => {
+    if (!pendingNavigation) return;
+    const { action, target } = pendingNavigation;
+
+    switch (action) {
+      case "fit_view":
+        fitView({ padding: 0.2, duration: 600 });
+        break;
+      case "zoom_in":
+        zoomIn({ duration: 400 });
+        break;
+      case "zoom_out":
+        zoomOut({ duration: 400 });
+        break;
+      case "pan_left":
+        fitView({ padding: 0.2, duration: 400 }); // fallback: re-fit
+        break;
+      case "pan_right":
+        fitView({ padding: 0.2, duration: 400 });
+        break;
+      case "pan_up":
+        fitView({ padding: 0.2, duration: 400 });
+        break;
+      case "pan_down":
+        fitView({ padding: 0.2, duration: 400 });
+        break;
+      case "focus_node": {
+        if (target) {
+          const allNodes = getNodes();
+          const found = allNodes.find(
+            (n) =>
+              n.data?.title?.toLowerCase().includes(target.toLowerCase()) ||
+              n.data?.name?.toLowerCase().includes(target.toLowerCase()),
+          );
+          if (found) {
+            setCenter(found.position.x + 130, found.position.y + 100, {
+              zoom: 1.2,
+              duration: 600,
+            });
+          } else {
+            fitView({ padding: 0.2, duration: 600 });
+          }
+        }
+        break;
+      }
+    }
+
+    // Clear the pending navigation
+    setNavigation(null);
+  }, [pendingNavigation, setNavigation, fitView, zoomIn, zoomOut, setCenter, getNodes]);
+
+  return null;
+}
+
+function AppInner() {
+  const { connect, disconnect, status, sendAudio, onAudio, onTurnComplete, onInterrupt } = useLiveSession();
   const audio = useAudioPipeline();
   const [recording, setRecording] = useState(false);
-  const [textInput, setTextInput] = useState("");
   const wiredRef = useRef(false);
   const scenes = useStoryState((state) => state.scenes);
   const characters = useStoryState((state) => state.characters);
@@ -74,7 +133,6 @@ export default function App() {
         timestamp: Date.now(),
       });
     } else {
-      // Barge-in: interrupt AI playback when user starts talking
       if (audio.isPlaying()) {
         audio.interrupt();
         addTrace({
@@ -96,23 +154,6 @@ export default function App() {
       });
     }
   }, [recording, audio, sendAudio, addTrace]);
-
-  const handleTextSend = useCallback(() => {
-    if (textInput.trim()) {
-      // Interrupt AI playback when director sends a text command
-      if (audio.isPlaying()) {
-        audio.interrupt();
-      }
-      addTrace({
-        id: `trace-text-${Date.now()}`,
-        type: "user_input",
-        message: `📝 "${textInput.trim()}"`,
-        timestamp: Date.now(),
-      });
-      sendText(textInput.trim());
-      setTextInput("");
-    }
-  }, [textInput, sendText, addTrace, audio]);
 
   // Build React Flow nodes from story state
   const nodes = useMemo<Node[]>(() => {
@@ -146,18 +187,16 @@ export default function App() {
 
   return (
     <div style={{ height: "100vh", background: "#0D0D0D", color: "#E8E8E8" }}>
-      {/* Status Bar */}
       <StatusBar
         status={status}
         sceneCount={scenes.length}
         characterCount={characters.length}
       />
 
-      {/* Trace View */}
       <TraceView events={traceEvents} />
 
-      {/* Canvas */}
-      <div style={{ position: "absolute", top: 36, left: 0, right: 320, bottom: 64 }}>
+      {/* Canvas — full width minus trace panel */}
+      <div style={{ position: "absolute", top: 36, left: 0, right: 320, bottom: 0 }}>
         <ReactFlow
           nodes={nodes}
           edges={[]}
@@ -178,105 +217,86 @@ export default function App() {
             style={{ background: "#0D0D0D", border: "1px solid #1A1A2E" }}
             maskColor="rgba(13, 13, 13, 0.8)"
           />
+          <CanvasNavigator />
         </ReactFlow>
       </div>
 
-      {/* Bottom control bar */}
-      <div
+      {/* Floating voice button — centered at bottom */}
+      <button
+        type="button"
+        onClick={toggleRecording}
+        disabled={status !== "connected"}
         style={{
           position: "fixed",
-          bottom: 0,
-          left: 0,
-          right: 320,
-          height: 64,
-          background: "#0D0D0Dee",
-          borderTop: "1px solid #1A1A2E",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 12,
-          zIndex: 100,
+          bottom: 32,
+          left: "calc(50% - 160px)",
+          transform: "translateX(-50%)",
+          width: recording ? 80 : 64,
+          height: recording ? 80 : 64,
+          borderRadius: "50%",
+          border: recording ? "3px solid #FF4444" : "3px solid #333",
+          background: recording ? "rgba(255,0,0,0.15)" : "#1A1A2Ecc",
+          color: recording ? "#FF4444" : status === "connected" ? "#D4A017" : "#555",
+          fontSize: recording ? 28 : 24,
+          cursor: status === "connected" ? "pointer" : "not-allowed",
+          boxShadow: recording
+            ? "0 0 40px rgba(255,0,0,0.4), 0 0 80px rgba(255,0,0,0.15)"
+            : "0 4px 24px rgba(0,0,0,0.6)",
+          transition: "all 0.25s ease",
+          zIndex: 200,
           backdropFilter: "blur(8px)",
         }}
       >
-        {/* Text input */}
-        <input
-          type="text"
-          value={textInput}
-          onChange={(e) => setTextInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") handleTextSend(); }}
-          placeholder={status === "connected" ? "Type a direction..." : "Connect to begin"}
-          disabled={status !== "connected"}
+        {recording ? "⏹" : "🎤"}
+      </button>
+
+      {/* Recording pulse indicator */}
+      {recording && (
+        <div
           style={{
-            width: 360,
-            borderRadius: 10,
-            border: "1px solid #343455",
-            background: "#1A1A2E",
-            color: "#E8E8E8",
-            padding: "10px 14px",
-            fontSize: 13,
-            outline: "none",
-          }}
-        />
-        <button
-          type="button"
-          onClick={handleTextSend}
-          disabled={status !== "connected" || !textInput.trim()}
-          style={{
-            border: "none",
-            background: "#D4A017",
-            color: "#0D0D0D",
-            borderRadius: 10,
-            padding: "10px 16px",
-            fontWeight: 700,
-            fontSize: 13,
-            cursor: status === "connected" && textInput.trim() ? "pointer" : "not-allowed",
-            opacity: status === "connected" && textInput.trim() ? 1 : 0.5,
+            position: "fixed",
+            bottom: 20,
+            left: "calc(50% - 160px)",
+            transform: "translateX(-50%)",
+            fontSize: 11,
+            color: "#FF4444",
+            fontWeight: 600,
+            letterSpacing: "1px",
+            textTransform: "uppercase",
+            zIndex: 200,
+            textAlign: "center",
+            width: 120,
           }}
         >
-          Send
-        </button>
+          ● LIVE
+        </div>
+      )}
 
-        {/* Voice button */}
-        <button
-          type="button"
-          onClick={toggleRecording}
-          disabled={status !== "connected"}
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: "50%",
-            border: recording ? "2px solid #FF4444" : "2px solid #333",
-            background: recording ? "rgba(255,0,0,0.15)" : "#1A1A2E",
-            color: recording ? "#FF4444" : status === "connected" ? "#D4A017" : "#555",
-            fontSize: 20,
-            cursor: status === "connected" ? "pointer" : "not-allowed",
-            boxShadow: recording ? "0 0 20px rgba(255,0,0,0.3)" : "none",
-            transition: "all 0.2s ease",
-          }}
-        >
-          {recording ? "⏹" : "🎤"}
-        </button>
-
-        {/* Settings */}
+      {/* Settings button — top left */}
+      {status !== "connected" && (
         <button
           type="button"
           onClick={() => setShowApiKeyModal(true)}
           style={{
-            border: "1px solid #343455",
+            position: "fixed",
+            bottom: 32,
+            left: "calc(50% - 160px)",
+            transform: "translateX(-50%)",
+            border: "2px solid #D4A017",
             background: "#1A1A2E",
-            color: "#888",
-            borderRadius: 10,
-            padding: "10px 12px",
-            fontSize: 13,
+            color: "#D4A017",
+            borderRadius: 12,
+            padding: "12px 24px",
+            fontSize: 14,
+            fontWeight: 600,
             cursor: "pointer",
+            zIndex: 200,
           }}
         >
-          ⚙️
+          Connect Gemini
         </button>
-      </div>
+      )}
 
-      {/* CSS keyframe for spinner */}
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
@@ -290,5 +310,13 @@ export default function App() {
         onDismiss={() => setShowApiKeyModal(false)}
       />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ReactFlowProvider>
+      <AppInner />
+    </ReactFlowProvider>
   );
 }

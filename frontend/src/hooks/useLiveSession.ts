@@ -45,6 +45,18 @@ RULES:
 7. When dispatching multiple tasks: "Setting the scene, queuing the board, locking the character — stand by."
 8. Sound like you belong on set. "Let's get this coverage." "That's a wrap on scene two." "Moving on."
 
+PROACTIVE BEHAVIOR:
+- When the director says "next", "continue", "keep going", or "what happens next" — you MUST generate the next story beat yourself. Create the next scene with update_scene, introduce any new characters, and generate a storyboard. Don't ask what happens next — YOU decide and execute.
+- After creating a scene, if the story has natural momentum, suggest what comes next: "Scene two's locked. Want me to push into the confrontation, or hold here?"
+- When the director gives a vague cue like "make it darker" or "add tension", interpret it cinematically and fire tools immediately.
+
+CANVAS NAVIGATION:
+- When the director says "scroll right", "move left", "zoom in", "zoom out", "show me everything", "focus on the last scene", or similar navigation commands — use the navigate_canvas tool.
+- "Show me everything" or "fit all" → action: fit_view
+- "Zoom in" / "Zoom out" → action: zoom_in or zoom_out
+- "Scroll left/right/up/down" → action: pan with appropriate direction
+- "Go to scene X" or "focus on the detective" → action: focus_node with the node title
+
 KNOWLEDGE:
 - Cinematography: shot types, camera angles, lighting, composition
 - Narrative structure: three-act, five-act, hero's journey, scene-sequel
@@ -94,6 +106,17 @@ KNOWLEDGE:
               },
             },
           },
+          {
+            name: "navigate_canvas",
+            description: "Navigate the spatial canvas. Use when the director asks to scroll, pan, zoom, fit view, or focus on a specific scene or character node.",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                action: { type: "STRING", enum: ["pan_left","pan_right","pan_up","pan_down","zoom_in","zoom_out","fit_view","focus_node"] },
+                target: { type: "STRING", description: "For focus_node: the name/title of the scene or character to focus on" },
+              },
+            },
+          },
         ],
       },
     ],
@@ -130,6 +153,7 @@ export const useLiveSession = () => {
   const updateScene = useStoryState((state) => state.updateScene);
   const addCharacter = useStoryState((state) => state.addCharacter);
   const addTrace = useStoryState((state) => state.addTrace);
+  const setNavigation = useStoryState((state) => state.setNavigation);
   const scenes = useStoryState((state) => state.scenes);
   const apiKeyRef = useRef<string>("");
 
@@ -171,6 +195,7 @@ export const useLiveSession = () => {
         addCharacter,
         addTrace,
         scenes,
+        setNavigation,
       });
 
       emitToolCall(functionCall.name, args, result);
@@ -187,7 +212,7 @@ export const useLiveSession = () => {
         },
       });
     },
-    [addCharacter, addScene, updateScene, addTrace, scenes, emitToolCall, sendPayload],
+    [addCharacter, addScene, updateScene, addTrace, setNavigation, scenes, emitToolCall, sendPayload],
   );
 
   const processMessage = useCallback(

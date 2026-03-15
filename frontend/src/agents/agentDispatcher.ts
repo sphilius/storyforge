@@ -10,6 +10,7 @@ type DispatchContext = {
   addCharacter: StoryState["addCharacter"];
   addTrace: StoryState["addTrace"];
   scenes: StoryState["scenes"];
+  setNavigation?: (nav: { action: string; target?: string }) => void;
 };
 
 /**
@@ -77,6 +78,22 @@ export function dispatchToolCall(
         timestamp: Date.now(),
       });
       return { status: "storyboard_queued" };
+    }
+
+    case "navigate_canvas": {
+      const action = typeof args.action === "string" ? args.action : "fit_view";
+      const target = typeof args.target === "string" ? args.target : undefined;
+      context.addTrace({
+        id: `trace-nav-${Date.now()}`,
+        type: "tool_call",
+        message: `🧭 Navigator: ${action}${target ? ` → "${target}"` : ""}`,
+        timestamp: Date.now(),
+      });
+      // Store navigation intent in zustand for the canvas component to execute
+      if (context.setNavigation) {
+        context.setNavigation({ action, target });
+      }
+      return { status: "navigation_executed", action };
     }
 
     default:
