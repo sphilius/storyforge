@@ -26,12 +26,20 @@ export default function App() {
     scenes,
     characters,
     traceEvents,
+    currentSceneIndex,
     updateScene,
     addTrace,
   } = useStoryState();
 
   const liveSession = useLiveSession();
   const audio = useAudioPipeline();
+
+  // Active scene for StatusBar
+  const activeScene = currentSceneIndex >= 0 && currentSceneIndex < scenes.length
+    ? scenes[currentSceneIndex]
+    : scenes.length > 0
+      ? scenes[scenes.length - 1]
+      : undefined;
 
   // Voice button state
   const voiceState = recording ? "recording" : audio.isPlaying() ? "playing" : "idle";
@@ -43,6 +51,22 @@ export default function App() {
       liveSession.connect(apiKey);
     },
     [liveSession],
+  );
+
+  // Send text direction
+  const handleSendText = useCallback(
+    (text: string) => {
+      if (liveSession.status !== "connected") return;
+      liveSession.sendText(text);
+      lastSentinelInputRef.current = text;
+      addTrace({
+        id: `trace-${Date.now()}`,
+        type: "user_input",
+        message: text,
+        timestamp: Date.now(),
+      });
+    },
+    [liveSession, addTrace],
   );
 
   // Wire live session events
@@ -141,6 +165,7 @@ export default function App() {
         liveSession.sendAudio(b64);
       });
       setRecording(true);
+      lastSentinelInputRef.current = "[voice input]";
       addTrace({
         id: `trace-${Date.now()}`,
         type: "user_input",
@@ -149,6 +174,20 @@ export default function App() {
       });
     }
   }, [recording, audio, liveSession, addTrace]);
+
+  // Global keyboard shortcut: Space to toggle recording
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      const target = e.target as HTMLElement;
+      // Don't intercept when typing in inputs
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      e.preventDefault();
+      void handleVoiceToggle();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleVoiceToggle]);
 
   // Auto-dismiss modal when connected
   useEffect(() => {
@@ -163,9 +202,11 @@ export default function App() {
         connectionStatus={liveSession.status}
         sceneCount={scenes.length}
         characterCount={characters.length}
+        activeScene={activeScene}
+        onSendText={liveSession.status === "connected" ? handleSendText : undefined}
       />
 
-      <div style={{ display: "flex", flex: 1, marginTop: 40, overflow: "hidden" }}>
+      <div style={{ display: "flex", flex: 1, marginTop: 48, overflow: "hidden" }}>
         <div style={{ flex: 1, position: "relative" }}>
           <SpatialCanvas scenes={scenes} characters={characters} />
         </div>
@@ -183,7 +224,7 @@ export default function App() {
         onDismiss={() => setShowApiModal(false)}
       />
 
-      {/* Pulse animations */}
+      {/* Animations */}
       <style>{`
         @keyframes pulse {
           0%, 100% { box-shadow: 0 0 0 0 rgba(255,68,68,0.5); }
@@ -192,6 +233,10 @@ export default function App() {
         @keyframes pulse-amber {
           0%, 100% { box-shadow: 0 0 0 0 rgba(212,160,23,0.5); }
           50% { box-shadow: 0 0 0 16px rgba(212,160,23,0); }
+        }
+        @keyframes shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
         }
       `}</style>
     </div>

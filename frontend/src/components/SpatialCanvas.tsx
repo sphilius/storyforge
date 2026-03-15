@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import ReactFlow, { Background, Controls, MiniMap } from "reactflow";
+import ReactFlow, { Background, Controls, MiniMap, BackgroundVariant } from "reactflow";
 import type { Node, Edge } from "reactflow";
 import "reactflow/dist/style.css";
 import type { Scene, Character } from "../hooks/useStoryState";
@@ -11,12 +11,8 @@ const nodeTypes = {
   character: CharacterNode,
 };
 
-function hashCode(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
+function hashCode(str: string): number {
+  return str.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
 }
 
 type SpatialCanvasProps = {
@@ -29,26 +25,43 @@ export function SpatialCanvas({ scenes, characters }: SpatialCanvasProps) {
     const sceneNodes: Node[] = scenes.map((scene, index) => ({
       id: scene.id,
       type: "scene",
-      position: { x: 200 + index * 350, y: 150 + (hashCode(scene.id) % 200) },
+      position: {
+        x: 200 + index * 350,
+        y: 150 + (hashCode(scene.title) % 200),
+      },
       data: {
         title: scene.title,
         mood: scene.mood,
         description: scene.description,
+        directorNotes: scene.directorNotes,
         imageUrl: scene.imageUrl,
         imageLoading: scene.imageLoading,
+        imageError: scene.imageError,
       },
     }));
 
-    const charNodes: Node[] = characters.map((char, index) => ({
-      id: char.id,
-      type: "character",
-      position: { x: 100 + index * 250, y: 500 + (hashCode(char.id) % 120) },
-      data: {
-        name: char.name,
-        description: char.description,
-        motivation: char.motivation,
-      },
-    }));
+    const charNodes: Node[] = characters.map((char) => {
+      // Find parent scene that references this character
+      const parentSceneIdx = scenes.findIndex((s) =>
+        s.characters.includes(char.id) || s.characters.includes(char.name),
+      );
+      const parentX = parentSceneIdx >= 0 ? 200 + parentSceneIdx * 350 : 200;
+      const parentY = parentSceneIdx >= 0 ? 150 + (hashCode(scenes[parentSceneIdx].title) % 200) : 350;
+
+      return {
+        id: char.id,
+        type: "character",
+        position: {
+          x: parentX + 50,
+          y: parentY + 220,
+        },
+        data: {
+          name: char.name,
+          description: char.description,
+          motivation: char.motivation,
+        },
+      };
+    });
 
     return [...sceneNodes, ...charNodes];
   }, [scenes, characters]);
@@ -73,8 +86,14 @@ export function SpatialCanvas({ scenes, characters }: SpatialCanvasProps) {
       proOptions={{ hideAttribution: true }}
       style={{ background: "#0D0D0D" }}
     >
-      <Background color="#1A1A2E" gap={24} />
-      <Controls style={{ background: "#1A1A2E", borderColor: "#2B2F3A" }} />
+      <Background variant={BackgroundVariant.Dots} color="#1a1a1a" gap={20} />
+      <Controls
+        style={{
+          background: "#1A1A2E",
+          borderColor: "#2B2F3A",
+          borderRadius: 8,
+        }}
+      />
       <MiniMap
         nodeColor="#D4A017"
         maskColor="rgba(0,0,0,0.7)"
