@@ -219,12 +219,14 @@ export const useLiveSession = () => {
   const processMessage = useCallback(
     (rawData: string) => {
       const message = JSON.parse(rawData) as Record<string, any>;
+      console.log("[LiveSession] Received message:", Object.keys(message));
 
       const parts = message?.server_content?.model_turn?.parts;
       if (Array.isArray(parts)) {
         parts.forEach((part: Record<string, any>) => {
           const inlineData = part.inline_data;
           if (inlineData?.data) {
+            console.log("[LiveSession] Audio chunk received, size:", inlineData.data.length);
             emitAudio(String(inlineData.data));
           }
         });
@@ -234,7 +236,10 @@ export const useLiveSession = () => {
       const functionCalls: FunctionCall[] =
         toolCallContainer?.function_calls ?? toolCallContainer?.functionCalls ?? [];
       if (Array.isArray(functionCalls)) {
-        functionCalls.forEach((fn) => handleToolCall(fn));
+        functionCalls.forEach((fn) => {
+          console.log("[LiveSession] Tool call:", fn.name, fn.args);
+          handleToolCall(fn);
+        });
       }
 
       if (message?.server_content?.turn_complete) {
@@ -255,21 +260,33 @@ export const useLiveSession = () => {
       socketRef.current = socket;
 
       socket.onopen = () => {
+        console.log("[LiveSession] WebSocket opened, sending setup...");
         sendPayload(setupMessage);
+        console.log("[LiveSession] Setup message sent for model:", MODEL_NAME);
         setStatus("connected");
       };
 
-      socket.onmessage = (event) => {
-        if (typeof event.data === "string") {
-          processMessage(event.data);
+      socket.onmessage = async (event) => {
+        let rawData: string;
+        if (event.data instanceof Blob) {
+          rawData = await event.data.text();
+        } else {
+          rawData = event.data;
+        }
+        try {
+          processMessage(rawData);
+        } catch (err) {
+          console.error("[LiveSession] Failed to process message:", err);
         }
       };
 
       socket.onerror = () => {
+        console.error("[LiveSession] WebSocket error");
         setStatus("error");
       };
 
       socket.onclose = () => {
+        console.log("[LiveSession] WebSocket closed");
         socketRef.current = null;
         setStatus((current) => (current === "error" ? "error" : "idle"));
       };

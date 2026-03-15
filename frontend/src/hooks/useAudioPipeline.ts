@@ -72,6 +72,9 @@ export function useAudioPipeline() {
       streamRef.current = stream;
 
       const ctx = new AudioContext({ sampleRate: 48000 });
+      if (ctx.state === "suspended") {
+        void ctx.resume();
+      }
       audioContextRef.current = ctx;
 
       await ctx.audioWorklet.addModule("/audio-processor.js");
@@ -115,6 +118,9 @@ export function useAudioPipeline() {
       playContextRef.current = new AudioContext({ sampleRate: 24000 });
     }
     const ctx = playContextRef.current;
+    if (ctx.state === "suspended") {
+      void ctx.resume();
+    }
     const int16 = base64ToInt16(b64);
     const float32 = new Float32Array(int16.length);
     for (let i = 0; i < int16.length; i++) {
