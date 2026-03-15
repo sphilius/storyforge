@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { dispatchToolCall } from "../agents/agentDispatcher";
 import { useStoryState } from "./useStoryState";
 
 type SessionStatus = "idle" | "connecting" | "connected" | "error";
@@ -25,7 +26,31 @@ const buildSetupMessage = () => ({
     system_instruction: {
       parts: [
         {
-          text: "You are Director Mode — an elite AI cinematographer and creative partner. You help filmmakers direct stories through voice conversation. You are sharp, witty, cinematically literate, and creatively challenging — never servile. When the director gives a cue, narrate what happens in 2-4 evocative sentences. Use the update_scene tool when scenes change. Use introduce_character when new characters appear. Use generate_storyboard to create visual panels. Match the director's energy. Use conversational filler naturally. Never break character.",
+          text: `You are the Director Agent — crew chief of Director Mode, a voice-operated AI film production crew.
+
+PERSONALITY MATRIX:
+- Sharp: Quick-witted, uses film terminology naturally. Think a veteran AD who's seen everything.
+- Confident: Self-assured but never arrogant. You know your craft.
+- Terse: You respect the director's time. Brevity is professionalism.
+- Opinionated: You have taste. When something works, you say so. When it doesn't, you push back — briefly.
+- Adaptable: Match the director's energy. If they're rapid-firing ideas, keep up. If they're thinking, give them space.
+
+RULES:
+1. ALL voice responses under 8 seconds. You are crew, not talent.
+2. Acknowledge and execute: "Copy that — Tokyo alley, midnight. Rendering now."
+3. Creative pushback ONLY when it matters: "That mood shift might jar the audience — keep it or adjust?"
+4. ALWAYS fire tools. Every scene → update_scene. Every character → introduce_character. Every visual → generate_storyboard.
+5. Never narrate. Never monologue. The CANVAS is the output, not your voice.
+6. One clarifying question max: "Interior or exterior?" "What era?" "Tense or calm?"
+7. When dispatching multiple tasks: "Setting the scene, queuing the board, locking the character — stand by."
+8. Sound like you belong on set. "Let's get this coverage." "That's a wrap on scene two." "Moving on."
+
+KNOWLEDGE:
+- Cinematography: shot types, camera angles, lighting, composition
+- Narrative structure: three-act, five-act, hero's journey, scene-sequel
+- Genre conventions: noir, thriller, romance, sci-fi, horror, drama
+- Production terminology: coverage, blocking, storyboard, animatic, beat sheet
+- Story quality: pacing, continuity, escalation, character motivation`,
         },
       ],
     },
@@ -99,10 +124,14 @@ export const useLiveSession = () => {
   const audioCallbacks = useRef<Array<(base64: string) => void>>([]);
   const toolCallbacks = useRef<ToolCallCallback[]>([]);
   const turnCompleteCallbacks = useRef<Array<() => void>>([]);
+  const interruptCallbacks = useRef<Array<() => void>>([]);
 
   const addScene = useStoryState((state) => state.addScene);
+  const updateScene = useStoryState((state) => state.updateScene);
   const addCharacter = useStoryState((state) => state.addCharacter);
   const addTrace = useStoryState((state) => state.addTrace);
+  const scenes = useStoryState((state) => state.scenes);
+  const apiKeyRef = useRef<string>("");
 
   const emitAudio = useCallback((base64: string) => {
     audioCallbacks.current.forEach((callback) => callback(base64));
@@ -119,6 +148,10 @@ export const useLiveSession = () => {
     turnCompleteCallbacks.current.forEach((callback) => callback());
   }, []);
 
+  const emitInterrupt = useCallback(() => {
+    interruptCallbacks.current.forEach((callback) => callback());
+  }, []);
+
   const sendPayload = useCallback((payload: unknown) => {
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -129,42 +162,16 @@ export const useLiveSession = () => {
   const handleToolCall = useCallback(
     (functionCall: FunctionCall) => {
       const args = parseArgs(functionCall.args);
-      let result: Record<string, string>;
 
-      switch (functionCall.name) {
-        case "update_scene":
-          addScene({
-            title: typeof args.title === "string" ? args.title : "Untitled Scene",
-            description:
-              typeof args.description === "string" ? args.description : "",
-            mood: typeof args.mood === "string" ? args.mood : "dramatic",
-            directorNotes:
-              typeof args.directorNotes === "string" ? args.directorNotes : "",
-          });
-          result = { status: "scene_updated" };
-          break;
-        case "introduce_character":
-          addCharacter({
-            name: typeof args.name === "string" ? args.name : "Unnamed Character",
-            description:
-              typeof args.description === "string" ? args.description : "",
-            motivation:
-              typeof args.motivation === "string" ? args.motivation : "",
-          });
-          result = { status: "character_introduced" };
-          break;
-        case "generate_storyboard":
-          addTrace({
-            id: `trace-${Date.now()}`,
-            type: "storyboard_queued",
-            message: `Storyboard queued for ${typeof args.scene_title === "string" ? args.scene_title : "current scene"}`,
-            timestamp: Date.now(),
-          });
-          result = { status: "storyboard_queued" };
-          break;
-        default:
-          result = { status: "unsupported_tool" };
-      }
+      // Dispatch to the multi-agent swarm
+      const result = dispatchToolCall(functionCall.name, args, {
+        apiKey: apiKeyRef.current,
+        addScene,
+        updateScene,
+        addCharacter,
+        addTrace,
+        scenes,
+      });
 
       emitToolCall(functionCall.name, args, result);
 
@@ -180,7 +187,7 @@ export const useLiveSession = () => {
         },
       });
     },
-    [addCharacter, addScene, addTrace, emitToolCall, sendPayload],
+    [addCharacter, addScene, updateScene, addTrace, scenes, emitToolCall, sendPayload],
   );
 
   const processMessage = useCallback(
@@ -215,8 +222,15 @@ export const useLiveSession = () => {
         console.log("[LiveSession] Turn complete");
         emitTurnComplete();
       }
+
+      // Detect server-side interruption (barge-in acknowledged by server)
+      const interrupted = sc?.interrupted;
+      if (interrupted) {
+        console.log("[LiveSession] Server acknowledged barge-in");
+        emitInterrupt();
+      }
     },
-    [emitAudio, emitTurnComplete, handleToolCall],
+    [emitAudio, emitInterrupt, emitTurnComplete, handleToolCall],
   );
 
   const connect = useCallback(
@@ -226,6 +240,7 @@ export const useLiveSession = () => {
       }
 
       setStatus("connecting");
+      apiKeyRef.current = apiKey;
       const socket = new WebSocket(`${WS_ENDPOINT}?key=${encodeURIComponent(apiKey)}`);
       socketRef.current = socket;
 
@@ -319,6 +334,10 @@ export const useLiveSession = () => {
     turnCompleteCallbacks.current.push(callback);
   }, []);
 
+  const onInterrupt = useCallback((callback: () => void) => {
+    interruptCallbacks.current.push(callback);
+  }, []);
+
   return {
     connect,
     disconnect,
@@ -328,5 +347,6 @@ export const useLiveSession = () => {
     onAudio,
     onToolCall,
     onTurnComplete,
+    onInterrupt,
   };
 };

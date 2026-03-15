@@ -1,31 +1,70 @@
-:root {
-  font-family: Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  background: #0f131a;
-}
-
-#root {
-  height: 100vh;
-}
-
 * {
+  margin: 0;
+  padding: 0;
   box-sizing: border-box;
 }
 
-button,
-input,
-textarea {
-  font-family: inherit;
+body {
+  background: #0D0D0D;
+  color: #E8E8E8;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* React Flow overrides for dark theme */
+.react-flow__node {
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 12px !important;
+  padding: 0 !important;
+}
+
+.react-flow__handle {
+  width: 8px !important;
+  height: 8px !important;
+  border: 2px solid #0D0D0D !important;
+}
+
+.react-flow__edge-path {
+  stroke: #D4A01766 !important;
+}
+
+.react-flow__background {
+  background: #0D0D0D !important;
+}
+
+.react-flow__controls button {
+  background: #1A1A2E !important;
+  border: 1px solid #2b2f3a !important;
+  color: #E8E8E8 !important;
+  fill: #E8E8E8 !important;
+}
+
+.react-flow__controls button:hover {
+  background: #252540 !important;
+}
+
+.react-flow__minimap {
+  border-radius: 8px !important;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0D0D0D;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
