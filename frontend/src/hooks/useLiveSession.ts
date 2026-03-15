@@ -207,7 +207,7 @@ export const useLiveSession = () => {
         functionCalls.forEach((fn) => {
           console.log("[LiveSession] Tool call:", fn.name);
           handleToolCall(fn);
-        },
+        }),
       }
 
       const turnComplete = sc?.turnComplete ?? sc?.turn_complete;
