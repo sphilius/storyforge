@@ -229,11 +229,20 @@ export const useLiveSession = () => {
         console.log("[LiveSession] Setup sent. Waiting for server response...");
       };
 
-      socket.onmessage = (event) => {
-        if (typeof event.data === "string") {
-          processMessage(event.data);
-        }
-      };
+      socket.onmessage = async (event) => {
+  let rawData;
+  if (event.data instanceof Blob) {
+    rawData = await event.data.text();
+  } else {
+    rawData = String(event.data);
+  }
+  try {
+    console.log("[LiveSession] Message received");
+    processMessage(rawData);
+  } catch (err) {
+    console.error("[LiveSession] Failed to process:", err);
+  }
+};
 
       socket.onerror = (event) => {
         console.error("[LiveSession] WebSocket error:", event);
