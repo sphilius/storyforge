@@ -1,0 +1,35 @@
+# ===========================================================================
+# Director Mode — Python Dependencies
+# ===========================================================================
+#
+# WHAT EACH PACKAGE DOES:
+#
+# google-adk          — Google's Agent Development Kit. The framework that
+#                       judges explicitly prefer. Provides LlmAgent, Runner,
+#                       InMemorySessionService, google_search tool, and the
+#                       entire agent orchestration pipeline.
+#                       Installs google-genai as a dependency automatically.
+#
+# fastapi             — Modern async web framework. Handles HTTP endpoints,
+#                       WebSocket connections, automatic API docs (/docs),
+#                       and request validation via Pydantic.
+#
+# uvicorn[standard]   — ASGI server that runs FastAPI. The [standard] extra
+#                       includes uvloop (faster event loop) and httptools
+#                       (faster HTTP parsing).
+#
+# pydantic            — Data validation library. FastAPI uses it for
+#                       request/response schemas. Already a FastAPI dependency,
+#                       but we pin it explicitly for clarity.
+#
+# python-dotenv       — Reads .env files into environment variables.
+#                       Only used in local development (Cloud Run sets
+#                       env vars directly).
+#
+# ===========================================================================
+
+google-adk>=1.0.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
