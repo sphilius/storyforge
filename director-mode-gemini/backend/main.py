@@ -8,6 +8,7 @@ independent story context.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -18,6 +19,8 @@ from pydantic import BaseModel
 
 from backend.agents.director_agent import DirectorAgent
 from backend.utils.story_state import StoryState
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Session store (in-memory; swap for Redis in production)
@@ -126,4 +129,4 @@ async def ws_direct(websocket: WebSocket, session_id: str):
             async for chunk in agent.direct_stream(prompt):
                 await websocket.send_text(chunk)
     except WebSocketDisconnect:
-        pass
+        logger.info(f"WebSocket disconnected for session_id: {session_id}")
