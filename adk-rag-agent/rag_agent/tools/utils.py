@@ -6,6 +6,8 @@ import logging
 import re
 
 from google.adk.tools.tool_context import ToolContext
+from google.api_core.exceptions import GoogleAPIError
+from google.auth.exceptions import GoogleAuthError
 from vertexai import rag
 
 from ..config import (
@@ -40,7 +42,7 @@ def get_corpus_resource_name(corpus_name: str) -> str:
         for corpus in corpora:
             if hasattr(corpus, "display_name") and corpus.display_name == corpus_name:
                 return corpus.name
-    except Exception as e:
+    except (GoogleAPIError, GoogleAuthError) as e:
         logger.warning(f"Error when checking for corpus display name: {str(e)}")
         # If we can't check, continue with the default behavior
         pass
@@ -93,7 +95,7 @@ def check_corpus_exists(corpus_name: str, tool_context: ToolContext) -> bool:
                 return True
 
         return False
-    except Exception as e:
+    except (GoogleAPIError, GoogleAuthError) as e:
         logger.error(f"Error checking if corpus exists: {str(e)}")
         # If we can't check, assume it doesn't exist
         return False
