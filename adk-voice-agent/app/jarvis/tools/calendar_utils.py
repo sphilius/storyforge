@@ -2,7 +2,6 @@
 Utility functions for Google Calendar integration.
 """
 
-import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -31,9 +30,7 @@ def get_calendar_service():
 
     # Check if token exists and is valid
     if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_info(
-            json.loads(TOKEN_PATH.read_text()), SCOPES
-        )
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
 
     # If credentials don't exist or are invalid, refresh or get new ones
     if not creds or not creds.valid:
