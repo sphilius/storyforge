@@ -6,7 +6,6 @@ This script helps you set up OAuth 2.0 credentials for Google Calendar integrati
 Follow the instructions in the console.
 """
 
-import os
 from pathlib import Path
 
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -16,7 +15,7 @@ from googleapiclient.discovery import build
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 # Path for token storage
-TOKEN_PATH = Path(os.path.expanduser("~/.credentials/calendar_token.json"))
+TOKEN_PATH = Path("~/.credentials/calendar_token.json").expanduser()
 CREDENTIALS_PATH = Path("credentials.json")
 
 
