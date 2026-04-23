@@ -1,0 +1,14 @@
+🔒 [Security] Restrict Permissive CORS in Director Mode Backend
+
+🎯 **What:**
+The application's CORS configuration used permissive wildcard patterns alongside `allow_credentials=True`. Specifically, it allowed `allow_methods=["*"]`, `allow_headers=["*"]`, and could have inadvertently included `"*"` in the `allow_origins` parsing logic.
+
+⚠️ **Risk:**
+When `allow_credentials=True` is enabled alongside permissive wildcard defaults (like allowing any method or headers, or if `*` sneaks into the origins list), it opens the door to cross-origin exploits. An attacker could craft malicious cross-origin requests that bypass intended access controls, potentially stealing sensitive session state or executing actions under a user's context.
+
+🛡️ **Solution:**
+I updated the `CORSMiddleware` across all `main.py` entry points (in `backend/app/`, `scripts/backend/app/`, and `director-mode-gemini/backend/`):
+- Explicitly filtered out any `"*"` origin from the parsed `CORS_ORIGINS` environment list.
+- Restrict `allow_methods` to specifically `["GET", "POST", "OPTIONS"]`.
+- Restrict `allow_headers` to specifically `["Content-Type", "Authorization", "Accept"]`.
+This follows the defense-in-depth secure defaults pattern while preserving functionality required for the single page app communicating with the API.
