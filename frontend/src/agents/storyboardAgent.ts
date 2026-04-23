@@ -29,11 +29,14 @@ export async function generateStoryboard(
   actions.updateScene(sceneId, { imageLoading: true });
 
   try {
-    const url = `${API_BASE}/${IMAGE_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const url = `${API_BASE}/${IMAGE_MODEL}:generateContent`;
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
         contents: [
           {
